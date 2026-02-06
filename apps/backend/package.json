@@ -1,0 +1,8 @@
+{
+  "name": "@bookmarks/backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "tsx src/index.ts"
+  }
+}

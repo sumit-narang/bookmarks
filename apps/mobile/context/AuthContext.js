@@ -8,6 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Google from 'expo-auth-session/providers/google';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as WebBrowser from 'expo-web-browser';
+import { wipeLocalDataOnSignOut } from '../data/localPersistence';
 
 // Required for Google auth to work properly
 WebBrowser.maybeCompleteAuthSession();
@@ -135,7 +136,7 @@ export const AuthProvider = ({ children }) => {
   // Sign out
   const signOut = async () => {
     try {
-      await AsyncStorage.removeItem(USER_STORAGE_KEY);
+      await wipeLocalDataOnSignOut();
       setUser(null);
     } catch (error) {
       console.error('Error signing out:', error);

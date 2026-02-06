@@ -26,6 +26,9 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 
+# local persistence artifacts
+.bookmarks/
+
 # macOS
 .DS_Store
 *.pem
@@ -41,3 +44,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+/apps/mobile/.expo
+/apps/mobile/android/.gradle
+/apps/mobile/android/.kotlin
+/apps/mobile/android/build
+/apps/mobile/android/app/build

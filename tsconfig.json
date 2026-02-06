@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "include": [
+    "core/**/*.ts",
+    "schema/**/*.ts",
+    "db/**/*.ts",
+    "apps/backend/**/*.ts",
+    "apps/cli/**/*.ts",
+    "tests/**/*.ts"
+  ]
+}

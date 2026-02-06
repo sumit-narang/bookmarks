@@ -1,5 +1,7 @@
 # Building & Running Locally (Android)
 
+This repository is now a workspace monorepo. Mobile app lives in `apps/mobile`, but all commands below are run from the repository root.
+
 ## Prerequisites
 
 - **Node.js** (via nvm)
@@ -28,7 +30,7 @@ source ~/.bashrc
 
 ### 2. Create `.env` file
 
-Create a `.env` file in the project root:
+Create a `.env` file in `apps/mobile`:
 
 ```
 EXPO_PUBLIC_GOOGLE_PLACES_API_KEY=<your-google-places-api-key>
@@ -39,7 +41,7 @@ The `JAVA_HOME` entry ensures the Expo/Gradle build uses Java 17 regardless of y
 
 ### 3. Add Google Maps API key to Android manifest
 
-Edit `android/app/src/main/AndroidManifest.xml` and add this `<meta-data>` entry inside the `<application>` tag:
+Edit `apps/mobile/android/app/src/main/AndroidManifest.xml` and add this `<meta-data>` entry inside the `<application>` tag:
 
 ```xml
 <meta-data android:name="com.google.android.geo.API_KEY" android:value="<your-google-maps-api-key>"/>
