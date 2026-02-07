@@ -196,16 +196,18 @@ No mock remote API for core confidence.
 ## 8) Delivery roadmap (vertical slices)
 
 ## Foundation
-- workspace + TypeScript setup
-- move app into `/apps/mobile` (if not already)
-- establish `/apps/backend` and `/apps/cli`
-- create `/schema` and `/db` foundations
+Status: ✅ Done
+- [x] workspace + TypeScript setup
+- [x] move app into `/apps/mobile` (if not already)
+- [x] establish `/apps/backend` and `/apps/cli`
+- [x] create `/schema` and `/db` foundations
 
 ## Slice 1: Preferences (first end-to-end)
-- implement `/preferences` with local + remote + sync
-- wire Hexagon screen to new module
-- add CLI commands for preferences
-- integration tests pass
+Status: ✅ Done
+- [x] implement `/preferences` with local + remote + sync
+- [x] wire Hexagon screen to new module
+- [x] add CLI commands for preferences
+- [x] integration tests pass
 
 ## Slice 2: Places
 - implement place upsert/fetch/delete (UUID + external Google ID)
@@ -248,10 +250,10 @@ CLI must call the same use-cases/repositories used by mobile.
 
 ## 10) Immediate next steps
 
-1. Create workspace + TS baselines for `/apps/*` and root modules.
-2. Define schema migration `v1` and DB adapters.
-3. Implement Slice 1 (Preferences) fully end-to-end with integration tests.
-4. Only then proceed to Places and Collections slices.
+- [x] Create workspace + TS baselines for `/apps/*` and root modules.
+- [x] Define schema migration `v1` and DB adapters.
+- [x] Implement preferences end-to-end with integration tests.
+- [ ] Proceed to Places and Collections work.
 
 ---
 
