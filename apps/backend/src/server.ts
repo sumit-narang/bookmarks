@@ -9,6 +9,13 @@ import { fileURLToPath } from 'node:url';
 import { nowIso } from '../../../core/src';
 import { createNodeSqliteAdapter, listUserTables, migrateDatabase } from '../../../db/src';
 import {
+  getPlace,
+  listPlaces,
+  parsePlaceInput,
+  removePlace,
+  upsertPlace,
+} from '../../../places/src';
+import {
   applyPreferenceSyncOperation,
   getOrCreatePreferences,
   getPreferenceSyncState,
@@ -309,6 +316,136 @@ const handleSyncPull = async (url: URL, response: ServerResponse, databasePath: 
   }
 };
 
+const extractPlaceListUserId = (pathname: string): string | null => {
+  const match = pathname.match(/^\/users\/([^/]+)\/places$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const encoded = match[1];
+
+  if (!encoded) {
+    return null;
+  }
+
+  return decodeURIComponent(encoded);
+};
+
+const extractPlaceIds = (pathname: string): { userId: string; placeId: string } | null => {
+  const match = pathname.match(/^\/users\/([^/]+)\/places\/([^/]+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const encodedUserId = match[1];
+  const encodedPlaceId = match[2];
+
+  if (!encodedUserId || !encodedPlaceId) {
+    return null;
+  }
+
+  return {
+    userId: decodeURIComponent(encodedUserId),
+    placeId: decodeURIComponent(encodedPlaceId),
+  };
+};
+
+const extractUpsertGoogleUserId = (pathname: string): string | null => {
+  const match = pathname.match(/^\/users\/([^/]+)\/places\/upsert-google$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const encoded = match[1];
+
+  if (!encoded) {
+    return null;
+  }
+
+  return decodeURIComponent(encoded);
+};
+
+const handlePlaceList = async (
+  response: ServerResponse,
+  userId: string,
+  databasePath: string
+): Promise<void> => {
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const places = await listPlaces(adapter, userId);
+    writeJson(response, 200, { places });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handlePlaceGet = async (
+  response: ServerResponse,
+  userId: string,
+  placeId: string,
+  databasePath: string
+): Promise<void> => {
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const place = await getPlace(adapter, userId, placeId);
+
+    if (!place) {
+      writeJson(response, 404, { error: 'Place not found.' });
+      return;
+    }
+
+    writeJson(response, 200, { place });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handlePlaceUpsertGoogle = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  userId: string,
+  databasePath: string
+): Promise<void> => {
+  const payload = await readJsonBody<Record<string, unknown>>(request);
+  const input = parsePlaceInput(payload);
+
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const place = await upsertPlace(adapter, { userId, input });
+    writeJson(response, 200, { place });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handlePlaceDelete = async (
+  response: ServerResponse,
+  userId: string,
+  placeId: string,
+  databasePath: string
+): Promise<void> => {
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const removed = await removePlace(adapter, userId, placeId);
+
+    if (!removed) {
+      writeJson(response, 404, { error: 'Place not found.' });
+      return;
+    }
+
+    writeJson(response, 200, { removed: true });
+  } finally {
+    await adapter.close();
+  }
+};
+
 const handleRequest = async (
   request: IncomingMessage,
   response: ServerResponse,
@@ -365,6 +502,34 @@ const handleRequest = async (
 
     if (request.method === 'GET' && url.pathname === '/sync/preferences/pull') {
       await handleSyncPull(url, response, options.databasePath);
+      return;
+    }
+
+    // --- Place routes ---
+
+    const upsertGoogleUserId = extractUpsertGoogleUserId(url.pathname);
+
+    if (upsertGoogleUserId && request.method === 'PUT') {
+      await handlePlaceUpsertGoogle(request, response, upsertGoogleUserId, options.databasePath);
+      return;
+    }
+
+    const placeIds = extractPlaceIds(url.pathname);
+
+    if (placeIds && request.method === 'GET') {
+      await handlePlaceGet(response, placeIds.userId, placeIds.placeId, options.databasePath);
+      return;
+    }
+
+    if (placeIds && request.method === 'DELETE') {
+      await handlePlaceDelete(response, placeIds.userId, placeIds.placeId, options.databasePath);
+      return;
+    }
+
+    const placeListUserId = extractPlaceListUserId(url.pathname);
+
+    if (placeListUserId && request.method === 'GET') {
+      await handlePlaceList(response, placeListUserId, options.databasePath);
       return;
     }
 

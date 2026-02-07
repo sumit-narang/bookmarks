@@ -6,6 +6,12 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createNodeSqliteAdapter, listUserTables, migrateDatabase } from '../../../db/src';
 import {
+  listPlaces,
+  removePlace,
+  upsertPlace,
+  type PlaceInput,
+} from '../../../places/src';
+import {
   createPreferencesHttpClient,
   getOrCreatePreferences,
   setPreferences,
@@ -25,6 +31,15 @@ interface ParsedArgs {
   customDepth: number | null;
   hasCustomDepth: boolean;
   useCustomDepth: boolean | undefined;
+  placeName: string | undefined;
+  placeAddress: string | undefined;
+  placeLat: number | undefined;
+  placeLng: number | undefined;
+  placeGooglePlaceId: string | undefined;
+  placeRating: number | undefined;
+  placeNotes: string | undefined;
+  placeImageUrl: string | undefined;
+  placeId: string | undefined;
 }
 
 const defaultDatabasePath = resolve(process.cwd(), '.bookmarks', 'local.sqlite');
@@ -74,6 +89,15 @@ const parseArguments = (argv: string[]): ParsedArgs => {
   let customDepth: number | null = null;
   let hasCustomDepth = false;
   let useCustomDepth: boolean | undefined;
+  let placeName: string | undefined;
+  let placeAddress: string | undefined;
+  let placeLat: number | undefined;
+  let placeLng: number | undefined;
+  let placeGooglePlaceId: string | undefined;
+  let placeRating: number | undefined;
+  let placeNotes: string | undefined;
+  let placeImageUrl: string | undefined;
+  let placeId: string | undefined;
 
   for (let index = 1; index < argv.length; index += 1) {
     const current = argv[index];
@@ -130,6 +154,51 @@ const parseArguments = (argv: string[]): ParsedArgs => {
         index += 1;
         break;
       }
+      case '--name': {
+        placeName = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--address': {
+        placeAddress = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--lat': {
+        placeLat = parseNumberValue(parseRequiredValue(argv, index, current), current);
+        index += 1;
+        break;
+      }
+      case '--lng': {
+        placeLng = parseNumberValue(parseRequiredValue(argv, index, current), current);
+        index += 1;
+        break;
+      }
+      case '--google-place-id': {
+        placeGooglePlaceId = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--rating': {
+        placeRating = parseNumberValue(parseRequiredValue(argv, index, current), current);
+        index += 1;
+        break;
+      }
+      case '--notes': {
+        placeNotes = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--image-url': {
+        placeImageUrl = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--place-id': {
+        placeId = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
       default: {
         if (current.startsWith('--')) {
           throw new Error(`Unknown option: ${current}`);
@@ -149,6 +218,15 @@ const parseArguments = (argv: string[]): ParsedArgs => {
     customDepth,
     hasCustomDepth,
     useCustomDepth,
+    placeName,
+    placeAddress,
+    placeLat,
+    placeLng,
+    placeGooglePlaceId,
+    placeRating,
+    placeNotes,
+    placeImageUrl,
+    placeId,
   };
 };
 
@@ -287,6 +365,83 @@ const runPreferencesSync = async (databasePath: string, userId: string, remoteUr
   }
 };
 
+const buildPlaceInput = (args: ParsedArgs): PlaceInput => {
+  if (args.placeName === undefined) {
+    throw new Error('Place --name is required.');
+  }
+
+  if (args.placeLat === undefined) {
+    throw new Error('Place --lat is required.');
+  }
+
+  if (args.placeLng === undefined) {
+    throw new Error('Place --lng is required.');
+  }
+
+  return {
+    name: args.placeName,
+    address: args.placeAddress ?? null,
+    latitude: args.placeLat,
+    longitude: args.placeLng,
+    googlePlaceId: args.placeGooglePlaceId ?? null,
+    rating: args.placeRating ?? null,
+    notes: args.placeNotes ?? null,
+    imageUrl: args.placeImageUrl ?? null,
+    metadataJson: null,
+  };
+};
+
+const runPlacesList = async (databasePath: string, userId: string): Promise<void> => {
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const places = await listPlaces(database, userId);
+    console.log(JSON.stringify(places, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
+const runPlacesUpsertGoogle = async (databasePath: string, args: ParsedArgs): Promise<void> => {
+  const input = buildPlaceInput(args);
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const place = await upsertPlace(database, { userId: args.userId, input });
+    console.log(JSON.stringify(place, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
+const runPlacesRemove = async (databasePath: string, args: ParsedArgs): Promise<void> => {
+  if (!args.placeId) {
+    throw new Error('--place-id is required for places:remove.');
+  }
+
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const removed = await removePlace(database, args.userId, args.placeId);
+
+    if (!removed) {
+      console.error('Place not found or already removed.');
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(JSON.stringify({ removed: true, placeId: args.placeId }));
+  } finally {
+    await database.close();
+  }
+};
+
 const printHelp = (): void => {
   console.log('Bookmarks CLI');
   console.log('');
@@ -297,6 +452,9 @@ const printHelp = (): void => {
   console.log('  preferences:get       Get current user preferences');
   console.log('  preferences:set       Update user preferences');
   console.log('  preferences:sync      Push/pull preference sync with backend');
+  console.log('  places:list           List places for a user');
+  console.log('  places:upsert-google  Upsert a place (dedup by google place ID)');
+  console.log('  places:remove         Soft-delete a place');
   console.log('');
   console.log('Options:');
   console.log('  --db <path>                 Custom SQLite database path');
@@ -308,6 +466,15 @@ const printHelp = (): void => {
   console.log('  --custom-depth <number>     Hexagon custom depth');
   console.log('  --clear-custom-depth        Set custom depth to null');
   console.log('  --use-custom-depth <bool>   true | false');
+  console.log('  --name <string>             Place name');
+  console.log('  --address <string>          Place address');
+  console.log('  --lat <number>              Latitude');
+  console.log('  --lng <number>              Longitude');
+  console.log('  --google-place-id <string>  Google Place ID');
+  console.log('  --rating <number>           Place rating');
+  console.log('  --notes <string>            Place notes');
+  console.log('  --image-url <string>        Place image URL');
+  console.log('  --place-id <id>             Place ID (for removal)');
 };
 
 const run = async (): Promise<void> => {
@@ -331,6 +498,15 @@ const run = async (): Promise<void> => {
       return;
     case 'preferences:sync':
       await runPreferencesSync(parsed.databasePath, parsed.userId, parsed.remoteUrl);
+      return;
+    case 'places:list':
+      await runPlacesList(parsed.databasePath, parsed.userId);
+      return;
+    case 'places:upsert-google':
+      await runPlacesUpsertGoogle(parsed.databasePath, parsed);
+      return;
+    case 'places:remove':
+      await runPlacesRemove(parsed.databasePath, parsed);
       return;
     default:
       printHelp();
