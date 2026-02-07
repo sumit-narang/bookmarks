@@ -6,6 +6,7 @@
     "db/**/*.ts",
     "preferences/**/*.ts",
     "places/**/*.ts",
+    "collections/**/*.ts",
     "apps/backend/**/*.ts",
     "apps/cli/**/*.ts",
     "tests/**/*.ts"

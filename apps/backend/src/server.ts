@@ -9,6 +9,17 @@ import { fileURLToPath } from 'node:url';
 import { nowIso } from '../../../core/src';
 import { createNodeSqliteAdapter, listUserTables, migrateDatabase } from '../../../db/src';
 import {
+  addPlaceToCollection,
+  createCollection,
+  getCollection,
+  listCollectionPlaces,
+  listCollections,
+  parseCollectionInput,
+  removeCollection,
+  removePlaceFromCollection,
+  updateCollection,
+} from '../../../collections/src';
+import {
   getPlace,
   listPlaces,
   parsePlaceInput,
@@ -446,6 +457,248 @@ const handlePlaceDelete = async (
   }
 };
 
+// --- Collection URL extractors ---
+
+const extractCollectionListUserId = (pathname: string): string | null => {
+  const match = pathname.match(/^\/users\/([^/]+)\/collections$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const encoded = match[1];
+
+  if (!encoded) {
+    return null;
+  }
+
+  return decodeURIComponent(encoded);
+};
+
+const extractCollectionIds = (pathname: string): { userId: string; collectionId: string } | null => {
+  const match = pathname.match(/^\/users\/([^/]+)\/collections\/([^/]+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const encodedUserId = match[1];
+  const encodedCollectionId = match[2];
+
+  if (!encodedUserId || !encodedCollectionId) {
+    return null;
+  }
+
+  return {
+    userId: decodeURIComponent(encodedUserId),
+    collectionId: decodeURIComponent(encodedCollectionId),
+  };
+};
+
+const extractCollectionPlacesPath = (pathname: string): { userId: string; collectionId: string } | null => {
+  const match = pathname.match(/^\/users\/([^/]+)\/collections\/([^/]+)\/places$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const encodedUserId = match[1];
+  const encodedCollectionId = match[2];
+
+  if (!encodedUserId || !encodedCollectionId) {
+    return null;
+  }
+
+  return {
+    userId: decodeURIComponent(encodedUserId),
+    collectionId: decodeURIComponent(encodedCollectionId),
+  };
+};
+
+const extractCollectionPlaceIds = (pathname: string): { userId: string; collectionId: string; placeId: string } | null => {
+  const match = pathname.match(/^\/users\/([^/]+)\/collections\/([^/]+)\/places\/([^/]+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const encodedUserId = match[1];
+  const encodedCollectionId = match[2];
+  const encodedPlaceId = match[3];
+
+  if (!encodedUserId || !encodedCollectionId || !encodedPlaceId) {
+    return null;
+  }
+
+  return {
+    userId: decodeURIComponent(encodedUserId),
+    collectionId: decodeURIComponent(encodedCollectionId),
+    placeId: decodeURIComponent(encodedPlaceId),
+  };
+};
+
+// --- Collection handlers ---
+
+const handleCollectionCreate = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  userId: string,
+  databasePath: string
+): Promise<void> => {
+  const payload = await readJsonBody<Record<string, unknown>>(request);
+  const input = parseCollectionInput(payload);
+
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const collection = await createCollection(adapter, { userId, input });
+    writeJson(response, 201, { collection });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleCollectionList = async (
+  response: ServerResponse,
+  userId: string,
+  databasePath: string
+): Promise<void> => {
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const collections = await listCollections(adapter, userId);
+    writeJson(response, 200, { collections });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleCollectionGet = async (
+  response: ServerResponse,
+  userId: string,
+  collectionId: string,
+  databasePath: string
+): Promise<void> => {
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const collection = await getCollection(adapter, userId, collectionId);
+
+    if (!collection) {
+      writeJson(response, 404, { error: 'Collection not found.' });
+      return;
+    }
+
+    writeJson(response, 200, { collection });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleCollectionUpdate = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  userId: string,
+  collectionId: string,
+  databasePath: string
+): Promise<void> => {
+  const payload = await readJsonBody<Record<string, unknown>>(request);
+  const input = parseCollectionInput(payload);
+
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const collection = await updateCollection(adapter, { userId, collectionId, input });
+    writeJson(response, 200, { collection });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleCollectionDelete = async (
+  response: ServerResponse,
+  userId: string,
+  collectionId: string,
+  databasePath: string
+): Promise<void> => {
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const removed = await removeCollection(adapter, userId, collectionId);
+
+    if (!removed) {
+      writeJson(response, 404, { error: 'Collection not found.' });
+      return;
+    }
+
+    writeJson(response, 200, { removed: true });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleCollectionAddPlace = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  userId: string,
+  collectionId: string,
+  databasePath: string
+): Promise<void> => {
+  const payload = await readJsonBody<{ placeId?: unknown }>(request);
+
+  if (typeof payload.placeId !== 'string') {
+    throw new Error('Request body must include placeId as a string.');
+  }
+
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const added = await addPlaceToCollection(adapter, { userId, collectionId, placeId: payload.placeId });
+    writeJson(response, 200, { added, collectionId, placeId: payload.placeId });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleCollectionRemovePlace = async (
+  response: ServerResponse,
+  userId: string,
+  collectionId: string,
+  placeId: string,
+  databasePath: string
+): Promise<void> => {
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const removed = await removePlaceFromCollection(adapter, { userId, collectionId, placeId });
+
+    if (!removed) {
+      writeJson(response, 404, { error: 'Membership not found.' });
+      return;
+    }
+
+    writeJson(response, 200, { removed: true });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleCollectionListPlaces = async (
+  response: ServerResponse,
+  userId: string,
+  collectionId: string,
+  databasePath: string
+): Promise<void> => {
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const places = await listCollectionPlaces(adapter, { userId, collectionId });
+    writeJson(response, 200, { places });
+  } finally {
+    await adapter.close();
+  }
+};
+
 const handleRequest = async (
   request: IncomingMessage,
   response: ServerResponse,
@@ -530,6 +783,63 @@ const handleRequest = async (
 
     if (placeListUserId && request.method === 'GET') {
       await handlePlaceList(response, placeListUserId, options.databasePath);
+      return;
+    }
+
+    // --- Collection routes ---
+    // Order: most specific paths first (collection-place-ids, collection-places, collection-ids, collection-list)
+
+    const collectionPlaceIds = extractCollectionPlaceIds(url.pathname);
+
+    if (collectionPlaceIds && request.method === 'DELETE') {
+      await handleCollectionRemovePlace(
+        response,
+        collectionPlaceIds.userId,
+        collectionPlaceIds.collectionId,
+        collectionPlaceIds.placeId,
+        options.databasePath
+      );
+      return;
+    }
+
+    const collectionPlacesPath = extractCollectionPlacesPath(url.pathname);
+
+    if (collectionPlacesPath && request.method === 'POST') {
+      await handleCollectionAddPlace(request, response, collectionPlacesPath.userId, collectionPlacesPath.collectionId, options.databasePath);
+      return;
+    }
+
+    if (collectionPlacesPath && request.method === 'GET') {
+      await handleCollectionListPlaces(response, collectionPlacesPath.userId, collectionPlacesPath.collectionId, options.databasePath);
+      return;
+    }
+
+    const collectionIds = extractCollectionIds(url.pathname);
+
+    if (collectionIds && request.method === 'GET') {
+      await handleCollectionGet(response, collectionIds.userId, collectionIds.collectionId, options.databasePath);
+      return;
+    }
+
+    if (collectionIds && request.method === 'PUT') {
+      await handleCollectionUpdate(request, response, collectionIds.userId, collectionIds.collectionId, options.databasePath);
+      return;
+    }
+
+    if (collectionIds && request.method === 'DELETE') {
+      await handleCollectionDelete(response, collectionIds.userId, collectionIds.collectionId, options.databasePath);
+      return;
+    }
+
+    const collectionListUserId = extractCollectionListUserId(url.pathname);
+
+    if (collectionListUserId && request.method === 'POST') {
+      await handleCollectionCreate(request, response, collectionListUserId, options.databasePath);
+      return;
+    }
+
+    if (collectionListUserId && request.method === 'GET') {
+      await handleCollectionList(response, collectionListUserId, options.databasePath);
       return;
     }
 

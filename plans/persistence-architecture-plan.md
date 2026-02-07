@@ -210,9 +210,10 @@ Status: ✅ Done
 - [x] integration tests pass
 
 ## Slice 2: Places
-- implement place upsert/fetch/delete (UUID + external Google ID)
-- ensure saved status is derived
-- integration tests + CLI
+Status: ✅ Done
+- [x] implement place upsert/fetch/delete (UUID + external Google ID)
+- [x] ensure saved status is derived
+- [x] integration tests + CLI
 
 ## Slice 3: Collections
 - collection CRUD + ordered membership
@@ -253,7 +254,7 @@ CLI must call the same use-cases/repositories used by mobile.
 - [x] Create workspace + TS baselines for `/apps/*` and root modules.
 - [x] Define schema migration `v1` and DB adapters.
 - [x] Implement preferences end-to-end with integration tests.
-- [ ] Proceed to Places and Collections work.
+- [x] Proceed to Places and Collections work.
 
 ---
 

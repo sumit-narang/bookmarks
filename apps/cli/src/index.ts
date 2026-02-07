@@ -12,6 +12,16 @@ import {
   type PlaceInput,
 } from '../../../places/src';
 import {
+  addPlaceToCollection,
+  createCollection,
+  getCollection,
+  listCollectionPlaces,
+  listCollections,
+  removeCollection,
+  removePlaceFromCollection,
+  updateCollection,
+} from '../../../collections/src';
+import {
   createPreferencesHttpClient,
   getOrCreatePreferences,
   setPreferences,
@@ -40,6 +50,9 @@ interface ParsedArgs {
   placeNotes: string | undefined;
   placeImageUrl: string | undefined;
   placeId: string | undefined;
+  collectionId: string | undefined;
+  collectionName: string | undefined;
+  collectionCoverImage: string | undefined;
 }
 
 const defaultDatabasePath = resolve(process.cwd(), '.bookmarks', 'local.sqlite');
@@ -98,6 +111,9 @@ const parseArguments = (argv: string[]): ParsedArgs => {
   let placeNotes: string | undefined;
   let placeImageUrl: string | undefined;
   let placeId: string | undefined;
+  let collectionId: string | undefined;
+  let collectionName: string | undefined;
+  let collectionCoverImage: string | undefined;
 
   for (let index = 1; index < argv.length; index += 1) {
     const current = argv[index];
@@ -199,6 +215,21 @@ const parseArguments = (argv: string[]): ParsedArgs => {
         index += 1;
         break;
       }
+      case '--collection-id': {
+        collectionId = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--collection-name': {
+        collectionName = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--cover-image': {
+        collectionCoverImage = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
       default: {
         if (current.startsWith('--')) {
           throw new Error(`Unknown option: ${current}`);
@@ -227,6 +258,9 @@ const parseArguments = (argv: string[]): ParsedArgs => {
     placeNotes,
     placeImageUrl,
     placeId,
+    collectionId,
+    collectionName,
+    collectionCoverImage,
   };
 };
 
@@ -442,6 +476,182 @@ const runPlacesRemove = async (databasePath: string, args: ParsedArgs): Promise<
   }
 };
 
+const runCollectionsCreate = async (databasePath: string, args: ParsedArgs): Promise<void> => {
+  if (!args.collectionName) {
+    throw new Error('--collection-name is required for collections:create.');
+  }
+
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const collection = await createCollection(database, {
+      userId: args.userId,
+      input: { name: args.collectionName, coverImage: args.collectionCoverImage ?? null },
+    });
+    console.log(JSON.stringify(collection, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
+const runCollectionsList = async (databasePath: string, userId: string): Promise<void> => {
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const collections = await listCollections(database, userId);
+    console.log(JSON.stringify(collections, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
+const runCollectionsGet = async (databasePath: string, args: ParsedArgs): Promise<void> => {
+  if (!args.collectionId) {
+    throw new Error('--collection-id is required for collections:get.');
+  }
+
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const collection = await getCollection(database, args.userId, args.collectionId);
+
+    if (!collection) {
+      console.error('Collection not found.');
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(JSON.stringify(collection, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
+const runCollectionsUpdate = async (databasePath: string, args: ParsedArgs): Promise<void> => {
+  if (!args.collectionId) {
+    throw new Error('--collection-id is required for collections:update.');
+  }
+
+  if (!args.collectionName) {
+    throw new Error('--collection-name is required for collections:update.');
+  }
+
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const collection = await updateCollection(database, {
+      userId: args.userId,
+      collectionId: args.collectionId,
+      input: { name: args.collectionName, coverImage: args.collectionCoverImage ?? null },
+    });
+    console.log(JSON.stringify(collection, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
+const runCollectionsRemove = async (databasePath: string, args: ParsedArgs): Promise<void> => {
+  if (!args.collectionId) {
+    throw new Error('--collection-id is required for collections:remove.');
+  }
+
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const removed = await removeCollection(database, args.userId, args.collectionId);
+
+    if (!removed) {
+      console.error('Collection not found or already removed.');
+      process.exitCode = 1;
+      return;
+    }
+
+    console.log(JSON.stringify({ removed: true, collectionId: args.collectionId }));
+  } finally {
+    await database.close();
+  }
+};
+
+const runCollectionsAddPlace = async (databasePath: string, args: ParsedArgs): Promise<void> => {
+  if (!args.collectionId) {
+    throw new Error('--collection-id is required for collections:add-place.');
+  }
+
+  if (!args.placeId) {
+    throw new Error('--place-id is required for collections:add-place.');
+  }
+
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const added = await addPlaceToCollection(database, {
+      userId: args.userId,
+      collectionId: args.collectionId,
+      placeId: args.placeId,
+    });
+    console.log(JSON.stringify({ added, collectionId: args.collectionId, placeId: args.placeId }));
+  } finally {
+    await database.close();
+  }
+};
+
+const runCollectionsRemovePlace = async (databasePath: string, args: ParsedArgs): Promise<void> => {
+  if (!args.collectionId) {
+    throw new Error('--collection-id is required for collections:remove-place.');
+  }
+
+  if (!args.placeId) {
+    throw new Error('--place-id is required for collections:remove-place.');
+  }
+
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const removed = await removePlaceFromCollection(database, {
+      userId: args.userId,
+      collectionId: args.collectionId,
+      placeId: args.placeId,
+    });
+    console.log(JSON.stringify({ removed, collectionId: args.collectionId, placeId: args.placeId }));
+  } finally {
+    await database.close();
+  }
+};
+
+const runCollectionsListPlaces = async (databasePath: string, args: ParsedArgs): Promise<void> => {
+  if (!args.collectionId) {
+    throw new Error('--collection-id is required for collections:list-places.');
+  }
+
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const places = await listCollectionPlaces(database, {
+      userId: args.userId,
+      collectionId: args.collectionId,
+    });
+    console.log(JSON.stringify(places, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
 const printHelp = (): void => {
   console.log('Bookmarks CLI');
   console.log('');
@@ -452,9 +662,17 @@ const printHelp = (): void => {
   console.log('  preferences:get       Get current user preferences');
   console.log('  preferences:set       Update user preferences');
   console.log('  preferences:sync      Push/pull preference sync with backend');
-  console.log('  places:list           List places for a user');
-  console.log('  places:upsert-google  Upsert a place (dedup by google place ID)');
-  console.log('  places:remove         Soft-delete a place');
+  console.log('  places:list               List places for a user');
+  console.log('  places:upsert-google      Upsert a place (dedup by google place ID)');
+  console.log('  places:remove             Soft-delete a place');
+  console.log('  collections:create        Create a new collection');
+  console.log('  collections:list          List collections for a user');
+  console.log('  collections:get           Get a single collection');
+  console.log('  collections:update        Update a collection');
+  console.log('  collections:remove        Soft-delete a collection');
+  console.log('  collections:add-place     Add a place to a collection');
+  console.log('  collections:remove-place  Remove a place from a collection');
+  console.log('  collections:list-places   List places in a collection');
   console.log('');
   console.log('Options:');
   console.log('  --db <path>                 Custom SQLite database path');
@@ -474,7 +692,10 @@ const printHelp = (): void => {
   console.log('  --rating <number>           Place rating');
   console.log('  --notes <string>            Place notes');
   console.log('  --image-url <string>        Place image URL');
-  console.log('  --place-id <id>             Place ID (for removal)');
+  console.log('  --place-id <id>             Place ID (for removal or membership)');
+  console.log('  --collection-id <id>        Collection ID');
+  console.log('  --collection-name <string>  Collection name');
+  console.log('  --cover-image <string>      Collection cover image URL');
 };
 
 const run = async (): Promise<void> => {
@@ -507,6 +728,30 @@ const run = async (): Promise<void> => {
       return;
     case 'places:remove':
       await runPlacesRemove(parsed.databasePath, parsed);
+      return;
+    case 'collections:create':
+      await runCollectionsCreate(parsed.databasePath, parsed);
+      return;
+    case 'collections:list':
+      await runCollectionsList(parsed.databasePath, parsed.userId);
+      return;
+    case 'collections:get':
+      await runCollectionsGet(parsed.databasePath, parsed);
+      return;
+    case 'collections:update':
+      await runCollectionsUpdate(parsed.databasePath, parsed);
+      return;
+    case 'collections:remove':
+      await runCollectionsRemove(parsed.databasePath, parsed);
+      return;
+    case 'collections:add-place':
+      await runCollectionsAddPlace(parsed.databasePath, parsed);
+      return;
+    case 'collections:remove-place':
+      await runCollectionsRemovePlace(parsed.databasePath, parsed);
+      return;
+    case 'collections:list-places':
+      await runCollectionsListPlaces(parsed.databasePath, parsed);
       return;
     default:
       printHelp();
