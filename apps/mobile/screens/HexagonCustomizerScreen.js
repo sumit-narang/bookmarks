@@ -3,7 +3,7 @@
  * Preview different variants and themes
  */
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,11 @@ import {
   PanResponder,
   Dimensions,
 } from 'react-native';
+import {
+  getDefaultHexagonPreferences,
+  loadHexagonPreferences,
+  saveHexagonPreferences,
+} from '../data/preferencesStorage';
 import HexagonMarker, { HEXAGON_VARIANTS, HEXAGON_THEMES } from '../components/HexagonMarker';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -84,13 +89,54 @@ const sliderStyles = StyleSheet.create({
   },
 });
 
+const defaultPreferences = getDefaultHexagonPreferences();
+
 const HexagonCustomizerScreen = ({ navigation }) => {
   // Customizable properties
-  const [size, setSize] = useState(80);
-  const [selectedVariant, setSelectedVariant] = useState('medium');
-  const [selectedTheme, setSelectedTheme] = useState('stone');
-  const [customDepth, setCustomDepth] = useState(16);
-  const [useCustomDepth, setUseCustomDepth] = useState(false);
+  const [size, setSize] = useState(defaultPreferences.hexagonSize);
+  const [selectedVariant, setSelectedVariant] = useState(defaultPreferences.hexagonVariant);
+  const [selectedTheme, setSelectedTheme] = useState(defaultPreferences.hexagonTheme);
+  const [customDepth, setCustomDepth] = useState(defaultPreferences.hexagonCustomDepth || 16);
+  const [useCustomDepth, setUseCustomDepth] = useState(defaultPreferences.hexagonUseCustomDepth);
+  const [hasLoadedPreferences, setHasLoadedPreferences] = useState(false);
+
+  // Load stored values on mount
+  useEffect(() => {
+    const loadPreferences = async () => {
+      const stored = await loadHexagonPreferences();
+
+      setSize(stored.hexagonSize);
+      setSelectedVariant(stored.hexagonVariant);
+      setSelectedTheme(stored.hexagonTheme);
+      setCustomDepth(stored.hexagonCustomDepth || 16);
+      setUseCustomDepth(stored.hexagonUseCustomDepth);
+      setHasLoadedPreferences(true);
+    };
+
+    loadPreferences();
+  }, []);
+
+  // Persist on change
+  useEffect(() => {
+    if (!hasLoadedPreferences) {
+      return;
+    }
+
+    saveHexagonPreferences({
+      hexagonTheme: selectedTheme,
+      hexagonVariant: selectedVariant,
+      hexagonSize: size,
+      hexagonCustomDepth: customDepth,
+      hexagonUseCustomDepth: useCustomDepth,
+    });
+  }, [
+    hasLoadedPreferences,
+    selectedTheme,
+    selectedVariant,
+    size,
+    customDepth,
+    useCustomDepth,
+  ]);
 
   // Get the code for current config
   const getConfigCode = () => {
