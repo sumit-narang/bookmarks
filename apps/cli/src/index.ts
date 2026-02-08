@@ -6,17 +6,23 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { createNodeSqliteAdapter, listUserTables, migrateDatabase } from '../../../db/src';
 import {
+  createPlacesHttpClient,
   listPlaces,
+  pullPlaceUpdates,
+  pushPlaceOutbox,
   removePlace,
   upsertPlace,
   type PlaceInput,
 } from '../../../places/src';
 import {
   addPlaceToCollection,
+  createCollectionsHttpClient,
   createCollection,
   getCollection,
   listCollectionPlaces,
   listCollections,
+  pullCollectionUpdates,
+  pushCollectionOutbox,
   removeCollection,
   removePlaceFromCollection,
   updateCollection,
@@ -24,6 +30,8 @@ import {
 import {
   createPreferencesHttpClient,
   getOrCreatePreferences,
+  pullPreferenceUpdates,
+  pushPreferenceOutbox,
   setPreferences,
   syncPreferences,
   type HexagonPreferencesPatch,
@@ -399,6 +407,122 @@ const runPreferencesSync = async (databasePath: string, userId: string, remoteUr
   }
 };
 
+const runSyncPushInternal = async (
+  database: ReturnType<typeof createNodeSqliteAdapter>,
+  userId: string,
+  remoteUrl: string
+): Promise<{
+  preferences: Awaited<ReturnType<typeof pushPreferenceOutbox>>;
+  places: Awaited<ReturnType<typeof pushPlaceOutbox>>;
+  collections: Awaited<ReturnType<typeof pushCollectionOutbox>>;
+}> => {
+  const preferencesRemote = createPreferencesHttpClient({ baseUrl: remoteUrl });
+  const placesRemote = createPlacesHttpClient({ baseUrl: remoteUrl });
+  const collectionsRemote = createCollectionsHttpClient({ baseUrl: remoteUrl });
+
+  const preferences = await pushPreferenceOutbox({
+    database,
+    userId,
+    remote: preferencesRemote,
+  });
+
+  const places = await pushPlaceOutbox({
+    database,
+    userId,
+    remote: placesRemote,
+  });
+
+  const collections = await pushCollectionOutbox({
+    database,
+    userId,
+    remote: collectionsRemote,
+  });
+
+  return {
+    preferences,
+    places,
+    collections,
+  };
+};
+
+const runSyncPullInternal = async (
+  database: ReturnType<typeof createNodeSqliteAdapter>,
+  userId: string,
+  remoteUrl: string
+): Promise<{
+  preferences: Awaited<ReturnType<typeof pullPreferenceUpdates>>;
+  places: Awaited<ReturnType<typeof pullPlaceUpdates>>;
+  collections: Awaited<ReturnType<typeof pullCollectionUpdates>>;
+}> => {
+  const preferencesRemote = createPreferencesHttpClient({ baseUrl: remoteUrl });
+  const placesRemote = createPlacesHttpClient({ baseUrl: remoteUrl });
+  const collectionsRemote = createCollectionsHttpClient({ baseUrl: remoteUrl });
+
+  const preferences = await pullPreferenceUpdates({
+    database,
+    userId,
+    remote: preferencesRemote,
+  });
+
+  const places = await pullPlaceUpdates({
+    database,
+    userId,
+    remote: placesRemote,
+  });
+
+  const collections = await pullCollectionUpdates({
+    database,
+    userId,
+    remote: collectionsRemote,
+  });
+
+  return {
+    preferences,
+    places,
+    collections,
+  };
+};
+
+const runSyncPush = async (databasePath: string, userId: string, remoteUrl: string): Promise<void> => {
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const result = await runSyncPushInternal(database, userId, remoteUrl);
+    console.log(JSON.stringify(result, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
+const runSyncPull = async (databasePath: string, userId: string, remoteUrl: string): Promise<void> => {
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const result = await runSyncPullInternal(database, userId, remoteUrl);
+    console.log(JSON.stringify(result, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
+const runSyncRun = async (databasePath: string, userId: string, remoteUrl: string): Promise<void> => {
+  ensureParentDirectory(databasePath);
+  const database = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    await migrateDatabase(database, schemaMigrations);
+    const push = await runSyncPushInternal(database, userId, remoteUrl);
+    const pull = await runSyncPullInternal(database, userId, remoteUrl);
+    console.log(JSON.stringify({ push, pull }, null, 2));
+  } finally {
+    await database.close();
+  }
+};
+
 const buildPlaceInput = (args: ParsedArgs): PlaceInput => {
   if (args.placeName === undefined) {
     throw new Error('Place --name is required.');
@@ -662,6 +786,9 @@ const printHelp = (): void => {
   console.log('  preferences:get       Get current user preferences');
   console.log('  preferences:set       Update user preferences');
   console.log('  preferences:sync      Push/pull preference sync with backend');
+  console.log('  sync:push             Push preferences + places + collections outbox');
+  console.log('  sync:pull             Pull preferences + places + collections state');
+  console.log('  sync:run              Run sync:push then sync:pull');
   console.log('  places:list               List places for a user');
   console.log('  places:upsert-google      Upsert a place (dedup by google place ID)');
   console.log('  places:remove             Soft-delete a place');
@@ -719,6 +846,15 @@ const run = async (): Promise<void> => {
       return;
     case 'preferences:sync':
       await runPreferencesSync(parsed.databasePath, parsed.userId, parsed.remoteUrl);
+      return;
+    case 'sync:push':
+      await runSyncPush(parsed.databasePath, parsed.userId, parsed.remoteUrl);
+      return;
+    case 'sync:pull':
+      await runSyncPull(parsed.databasePath, parsed.userId, parsed.remoteUrl);
+      return;
+    case 'sync:run':
+      await runSyncRun(parsed.databasePath, parsed.userId, parsed.remoteUrl);
       return;
     case 'places:list':
       await runPlacesList(parsed.databasePath, parsed.userId);

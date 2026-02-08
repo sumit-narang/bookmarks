@@ -10,6 +10,7 @@ import { nowIso } from '../../../core/src';
 import { createNodeSqliteAdapter, listUserTables, migrateDatabase } from '../../../db/src';
 import {
   addPlaceToCollection,
+  applyCollectionSyncOperation,
   createCollection,
   getCollection,
   listCollectionPlaces,
@@ -18,19 +19,26 @@ import {
   removeCollection,
   removePlaceFromCollection,
   updateCollection,
+  type CollectionInput,
+  type CollectionSyncOperation,
+  type CollectionSyncOperationType,
 } from '../../../collections/src';
 import {
+  applyPlaceSyncOperation,
   getPlace,
   listPlaces,
   parsePlaceInput,
   removePlace,
   upsertPlace,
+  type PlaceInput,
+  type PlaceSyncOperation,
 } from '../../../places/src';
 import {
   applyPreferenceSyncOperation,
   getOrCreatePreferences,
   getPreferenceSyncState,
   setPreferences,
+  type HexagonPreferencesValues,
   type HexagonPreferencesPatch,
   type PreferenceSyncOperation,
 } from '../../../preferences/src';
@@ -128,13 +136,7 @@ const parsePreferencePatch = (value: unknown): HexagonPreferencesPatch => {
   return patch;
 };
 
-const parsePreferenceValues = (value: unknown): {
-  hexagonTheme: string;
-  hexagonVariant: string;
-  hexagonSize: number;
-  hexagonCustomDepth: number | null;
-  hexagonUseCustomDepth: boolean;
-} => {
+const parsePreferenceValues = (value: unknown): HexagonPreferencesValues => {
   const patch = parsePreferencePatch(value);
 
   if (
@@ -156,7 +158,30 @@ const parsePreferenceValues = (value: unknown): {
   };
 };
 
-const parseSyncOperation = (value: unknown): PreferenceSyncOperation => {
+const compareOperationVersion = (
+  left: { updatedAt: string; operationId: string },
+  right: { updatedAt: string; operationId: string }
+): number => {
+  if (left.updatedAt > right.updatedAt) {
+    return 1;
+  }
+
+  if (left.updatedAt < right.updatedAt) {
+    return -1;
+  }
+
+  if (left.operationId > right.operationId) {
+    return 1;
+  }
+
+  if (left.operationId < right.operationId) {
+    return -1;
+  }
+
+  return 0;
+};
+
+const parsePreferenceSyncOperation = (value: unknown): PreferenceSyncOperation => {
   if (!value || typeof value !== 'object') {
     throw new Error('Sync operation must be an object.');
   }
@@ -180,6 +205,146 @@ const parseSyncOperation = (value: unknown): PreferenceSyncOperation => {
     operationId: input.operationId,
     updatedAt: input.updatedAt,
     preferences: parsePreferenceValues(input.preferences),
+  };
+};
+
+interface GenericSyncOperationInput {
+  entityId: string;
+  operationId: string;
+  operationType: string;
+  updatedAt: string;
+  payload: Record<string, unknown>;
+}
+
+const parseGenericSyncOperationInput = (value: unknown): GenericSyncOperationInput => {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Sync operation must be an object.');
+  }
+
+  const input = value as Record<string, unknown>;
+
+  if (typeof input.entityId !== 'string') {
+    throw new Error('Sync operation is missing entityId.');
+  }
+
+  if (typeof input.operationId !== 'string') {
+    throw new Error('Sync operation is missing operationId.');
+  }
+
+  if (typeof input.operationType !== 'string') {
+    throw new Error('Sync operation is missing operationType.');
+  }
+
+  if (typeof input.updatedAt !== 'string') {
+    throw new Error('Sync operation is missing updatedAt.');
+  }
+
+  if (!input.payload || typeof input.payload !== 'object') {
+    throw new Error('Sync operation is missing payload object.');
+  }
+
+  return {
+    entityId: input.entityId,
+    operationId: input.operationId,
+    operationType: input.operationType,
+    updatedAt: input.updatedAt,
+    payload: input.payload as Record<string, unknown>,
+  };
+};
+
+const parsePlaceSyncOperation = (value: unknown, userId: string): PlaceSyncOperation => {
+  const operation = parseGenericSyncOperationInput(value);
+  const payloadUserId = typeof operation.payload.userId === 'string' ? operation.payload.userId : userId;
+
+  if (payloadUserId !== userId) {
+    throw new Error('Place sync operation userId does not match payload userId.');
+  }
+
+  const placeId = typeof operation.payload.placeId === 'string' ? operation.payload.placeId : operation.entityId;
+
+  if (operation.operationType !== 'upsert' && operation.operationType !== 'delete') {
+    throw new Error(`Unsupported place sync operation type: ${operation.operationType}.`);
+  }
+
+  if (operation.operationType === 'upsert') {
+    const placeInput = parsePlaceInput(operation.payload.place);
+
+    return {
+      userId,
+      placeId,
+      operationId: operation.operationId,
+      operationType: 'upsert',
+      updatedAt: operation.updatedAt,
+      place: placeInput,
+    };
+  }
+
+  return {
+    userId,
+    placeId,
+    operationId: operation.operationId,
+    operationType: 'delete',
+    updatedAt: operation.updatedAt,
+    place: null,
+  };
+};
+
+const parseCollectionSyncOperation = (value: unknown, userId: string): CollectionSyncOperation => {
+  const operation = parseGenericSyncOperationInput(value);
+  const payloadUserId = typeof operation.payload.userId === 'string' ? operation.payload.userId : userId;
+
+  if (payloadUserId !== userId) {
+    throw new Error('Collection sync operation userId does not match payload userId.');
+  }
+
+  const collectionId = typeof operation.payload.collectionId === 'string'
+    ? operation.payload.collectionId
+    : operation.entityId;
+
+  if (
+    operation.operationType !== 'create'
+    && operation.operationType !== 'update'
+    && operation.operationType !== 'delete'
+    && operation.operationType !== 'add-place'
+    && operation.operationType !== 'remove-place'
+    && operation.operationType !== 'upsert'
+  ) {
+    throw new Error(`Unsupported collection sync operation type: ${operation.operationType}.`);
+  }
+
+  const placeId = typeof operation.payload.placeId === 'string' ? operation.payload.placeId : null;
+
+  let collectionInput: CollectionInput | null = null;
+
+  if (operation.payload.collection !== null && operation.payload.collection !== undefined) {
+    collectionInput = parseCollectionInput(operation.payload.collection);
+  }
+
+  let placeIds: string[] | undefined;
+
+  if (operation.payload.placeIds !== undefined) {
+    if (!Array.isArray(operation.payload.placeIds)) {
+      throw new Error('Collection sync operation placeIds must be an array when provided.');
+    }
+
+    placeIds = operation.payload.placeIds.map((entry) => {
+      if (typeof entry !== 'string') {
+        throw new Error('Collection sync operation placeIds entries must be strings.');
+      }
+
+      return entry;
+    });
+  }
+
+  return {
+    userId,
+    collectionId,
+    operationId: operation.operationId,
+    operationType: operation.operationType,
+    updatedAt: operation.updatedAt,
+    collection: collectionInput,
+    placeId,
+    placeIds,
   };
 };
 
@@ -259,7 +424,7 @@ const handleSyncPush = async (request: IncomingMessage, response: ServerResponse
     throw new Error('Push payload must include operations array.');
   }
 
-  const operations = payload.operations.map((operation) => parseSyncOperation(operation));
+  const operations = payload.operations.map((operation) => parsePreferenceSyncOperation(operation));
 
   for (const operation of operations) {
     if (operation.userId !== payload.userId) {
@@ -321,6 +486,308 @@ const handleSyncPull = async (url: URL, response: ServerResponse, databasePath: 
       preference: shouldReturnPreference ? preferences : null,
       cursor: shouldReturnPreference ? preferences.updatedAt : cursor,
       lastSyncedOperationId: syncState?.lastSyncedOperationId ?? null,
+    });
+  } finally {
+    await adapter.close();
+  }
+};
+
+interface PlaceSyncSnapshotRow {
+  id: string;
+  user_id: string;
+  google_place_id: string | null;
+  name: string;
+  address: string | null;
+  latitude: number;
+  longitude: number;
+  rating: number | null;
+  notes: string | null;
+  image_url: string | null;
+  metadata_json: string | null;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+const handlePlaceSyncPush = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  databasePath: string
+): Promise<void> => {
+  const payload = await readJsonBody<{ userId?: unknown; operations?: unknown }>(request);
+
+  if (typeof payload.userId !== 'string') {
+    throw new Error('Push payload must include userId.');
+  }
+
+  if (!Array.isArray(payload.operations)) {
+    throw new Error('Push payload must include operations array.');
+  }
+
+  const operations = payload.operations.map((operation) => parsePlaceSyncOperation(operation, payload.userId as string));
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const appliedOperationIds: string[] = [];
+    let latestVersion: { updatedAt: string; operationId: string } | null = null;
+
+    for (const operation of operations) {
+      const result = await applyPlaceSyncOperation(adapter, operation);
+
+      if (result.applied) {
+        appliedOperationIds.push(operation.operationId);
+      }
+
+      if (
+        latestVersion === null
+        || compareOperationVersion(
+          {
+            updatedAt: operation.updatedAt,
+            operationId: operation.operationId,
+          },
+          latestVersion
+        ) > 0
+      ) {
+        latestVersion = {
+          updatedAt: operation.updatedAt,
+          operationId: operation.operationId,
+        };
+      }
+    }
+
+    writeJson(response, 200, {
+      appliedOperationIds,
+      latestOperationId: latestVersion?.operationId ?? null,
+      serverTimestamp: nowIso(),
+    });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handlePlaceSyncPull = async (url: URL, response: ServerResponse, databasePath: string): Promise<void> => {
+  const userId = url.searchParams.get('userId');
+
+  if (!userId) {
+    throw new Error('Pull query requires userId.');
+  }
+
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const rows = await adapter.all<PlaceSyncSnapshotRow>(
+      `SELECT
+         id,
+         user_id,
+         google_place_id,
+         name,
+         address,
+         latitude,
+         longitude,
+         rating,
+         notes,
+         image_url,
+         metadata_json,
+         updated_at,
+         deleted_at
+       FROM places
+       WHERE user_id = ?
+       ORDER BY updated_at ASC, id ASC;`,
+      [userId]
+    );
+
+    const entities = rows.map((row) => {
+      const operationType = row.deleted_at ? 'delete' : 'upsert';
+
+      return {
+        entityId: row.id,
+        updatedAt: row.updated_at,
+        operationId: `${row.updated_at}:${row.id}`,
+        data: {
+          userId: row.user_id,
+          placeId: row.id,
+          operationType,
+          updatedAt: row.updated_at,
+          place: operationType === 'upsert'
+            ? {
+              name: row.name,
+              address: row.address,
+              latitude: Number(row.latitude),
+              longitude: Number(row.longitude),
+              googlePlaceId: row.google_place_id,
+              rating: row.rating === null ? null : Number(row.rating),
+              notes: row.notes,
+              imageUrl: row.image_url,
+              metadataJson: row.metadata_json,
+            }
+            : null,
+        },
+      };
+    });
+
+    writeJson(response, 200, {
+      entities,
+      cursor: nowIso(),
+    });
+  } finally {
+    await adapter.close();
+  }
+};
+
+interface CollectionSyncSnapshotRow {
+  id: string;
+  user_id: string;
+  name: string;
+  cover_image: string | null;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+interface CollectionSyncPlaceRow {
+  place_id: string;
+}
+
+const handleCollectionSyncPush = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  databasePath: string
+): Promise<void> => {
+  const payload = await readJsonBody<{ userId?: unknown; operations?: unknown }>(request);
+
+  if (typeof payload.userId !== 'string') {
+    throw new Error('Push payload must include userId.');
+  }
+
+  if (!Array.isArray(payload.operations)) {
+    throw new Error('Push payload must include operations array.');
+  }
+
+  const operations = payload.operations.map((operation) => parseCollectionSyncOperation(operation, payload.userId as string));
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const appliedOperationIds: string[] = [];
+    let latestVersion: { updatedAt: string; operationId: string } | null = null;
+
+    for (const operation of operations) {
+      const result = await applyCollectionSyncOperation(adapter, operation);
+
+      if (result.applied) {
+        appliedOperationIds.push(operation.operationId);
+      }
+
+      if (
+        latestVersion === null
+        || compareOperationVersion(
+          {
+            updatedAt: operation.updatedAt,
+            operationId: operation.operationId,
+          },
+          latestVersion
+        ) > 0
+      ) {
+        latestVersion = {
+          updatedAt: operation.updatedAt,
+          operationId: operation.operationId,
+        };
+      }
+    }
+
+    writeJson(response, 200, {
+      appliedOperationIds,
+      latestOperationId: latestVersion?.operationId ?? null,
+      serverTimestamp: nowIso(),
+    });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleCollectionSyncPull = async (url: URL, response: ServerResponse, databasePath: string): Promise<void> => {
+  const userId = url.searchParams.get('userId');
+
+  if (!userId) {
+    throw new Error('Pull query requires userId.');
+  }
+
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const rows = await adapter.all<CollectionSyncSnapshotRow>(
+      `SELECT id, user_id, name, cover_image, updated_at, deleted_at
+       FROM collections
+       WHERE user_id = ?
+       ORDER BY updated_at ASC, id ASC;`,
+      [userId]
+    );
+
+    const entities: Array<{
+      entityId: string;
+      updatedAt: string;
+      operationId: string;
+      data: {
+        userId: string;
+        collectionId: string;
+        operationType: CollectionSyncOperationType;
+        updatedAt: string;
+        collection: CollectionInput | null;
+        placeId: string | null;
+        placeIds?: string[];
+      };
+    }> = [];
+
+    for (const row of rows) {
+      if (row.deleted_at) {
+        entities.push({
+          entityId: row.id,
+          updatedAt: row.updated_at,
+          operationId: `${row.updated_at}:${row.id}`,
+          data: {
+            userId: row.user_id,
+            collectionId: row.id,
+            operationType: 'delete',
+            updatedAt: row.updated_at,
+            collection: null,
+            placeId: null,
+          },
+        });
+
+        continue;
+      }
+
+      const placeRows = await adapter.all<CollectionSyncPlaceRow>(
+        `SELECT cp.place_id
+         FROM collection_places cp
+         INNER JOIN places p ON p.id = cp.place_id
+         WHERE cp.collection_id = ?
+           AND cp.deleted_at IS NULL
+           AND p.user_id = ?
+           AND p.deleted_at IS NULL
+         ORDER BY cp.position ASC;`,
+        [row.id, row.user_id]
+      );
+
+      entities.push({
+        entityId: row.id,
+        updatedAt: row.updated_at,
+        operationId: `${row.updated_at}:${row.id}`,
+        data: {
+          userId: row.user_id,
+          collectionId: row.id,
+          operationType: 'upsert',
+          updatedAt: row.updated_at,
+          collection: {
+            name: row.name,
+            coverImage: row.cover_image,
+          },
+          placeId: null,
+          placeIds: placeRows.map((placeRow) => placeRow.place_id),
+        },
+      });
+    }
+
+    writeJson(response, 200, {
+      entities,
+      cursor: nowIso(),
     });
   } finally {
     await adapter.close();
@@ -755,6 +1222,26 @@ const handleRequest = async (
 
     if (request.method === 'GET' && url.pathname === '/sync/preferences/pull') {
       await handleSyncPull(url, response, options.databasePath);
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/sync/places/push') {
+      await handlePlaceSyncPush(request, response, options.databasePath);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/sync/places/pull') {
+      await handlePlaceSyncPull(url, response, options.databasePath);
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/sync/collections/push') {
+      await handleCollectionSyncPush(request, response, options.databasePath);
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/sync/collections/pull') {
+      await handleCollectionSyncPull(url, response, options.databasePath);
       return;
     }
 

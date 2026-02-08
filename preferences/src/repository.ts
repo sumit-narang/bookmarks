@@ -4,7 +4,15 @@
 
 import { createUuid, nowIso } from '../../core/src';
 import type { DatabaseAdapter } from '../../db/src';
-import type { PreferenceRow, SyncStateRow } from '../../schema/src';
+import type { PreferenceRow } from '../../schema/src';
+import {
+  createOutboxEntry,
+  getSyncState,
+  listPendingMutations,
+  markMutationFailed,
+  markMutationProcessed,
+  updateSyncState,
+} from '../../sync/src';
 import { defaultHexagonPreferences } from './defaults';
 import {
   mergeHexagonPreferences,
@@ -24,12 +32,11 @@ interface PreferenceWithVersionRow extends PreferenceRow {
 }
 
 interface PendingOutboxRow {
-  id: string;
-  user_id: string;
-  operation_id: string;
-  payload_json: string;
-  created_at: string;
-  updated_at: string;
+  outboxId: string;
+  userId: string;
+  operationId: string;
+  payload: unknown;
+  createdAt: string;
   attempts: number;
 }
 
@@ -38,6 +45,8 @@ interface PreferencePayload {
   updatedAt: string;
   preferences: HexagonPreferencesValues;
 }
+
+const PREFERENCES_ENTITY_TYPE = 'preferences';
 
 const ensureUserExists = async (database: DatabaseAdapter, userId: string, timestamp: string): Promise<void> => {
   await database.run(
@@ -85,9 +94,9 @@ const readPreferencesRow = async (database: DatabaseAdapter, userId: string): Pr
        p.updated_at,
        s.last_synced_operation_id
      FROM preferences p
-     LEFT JOIN sync_state s ON s.user_id = p.user_id
+     LEFT JOIN sync_state s ON s.user_id = p.user_id AND s.entity_type = ?
      WHERE p.user_id = ?;`,
-    [userId]
+    [PREFERENCES_ENTITY_TYPE, userId]
   );
 
   if (!row) {
@@ -139,21 +148,12 @@ const writeSyncVersion = async (
   operationId: string | null,
   updatedAt: string
 ): Promise<void> => {
-  await database.run(
-    `INSERT INTO sync_state (
-      user_id,
-      last_pulled_at,
-      last_pushed_at,
-      remote_cursor,
-      last_synced_operation_id,
-      updated_at
-    )
-    VALUES (?, NULL, NULL, NULL, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET
-      last_synced_operation_id = excluded.last_synced_operation_id,
-      updated_at = excluded.updated_at;`,
-    [userId, operationId, updatedAt]
-  );
+  await updateSyncState(database, {
+    userId,
+    entityType: PREFERENCES_ENTITY_TYPE,
+    lastSyncedOperationId: operationId,
+    updatedAt,
+  });
 };
 
 const isPreferencePayload = (payload: unknown): payload is PreferencePayload => {
@@ -186,41 +186,18 @@ const createOutboxMutation = async (
   updatedAt: string,
   preferences: HexagonPreferencesValues
 ): Promise<void> => {
-  const createdAt = nowIso();
-  const payload = JSON.stringify({
+  await createOutboxEntry(database, {
     userId,
-    updatedAt,
-    preferences,
+    entityType: PREFERENCES_ENTITY_TYPE,
+    entityId: userId,
+    operationType: 'upsert',
+    operationId,
+    payloadJson: JSON.stringify({
+      userId,
+      updatedAt,
+      preferences,
+    }),
   });
-
-  await database.run(
-    `INSERT INTO outbox (
-      id,
-      user_id,
-      operation_type,
-      entity_type,
-      entity_id,
-      payload_json,
-      operation_id,
-      created_at,
-      updated_at,
-      attempts,
-      last_error,
-      processed_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL);`,
-    [
-      createUuid(),
-      userId,
-      'upsert',
-      'preferences',
-      userId,
-      payload,
-      operationId,
-      createdAt,
-      createdAt,
-    ]
-  );
 };
 
 /**
@@ -424,44 +401,32 @@ export const listPendingPreferenceMutations = async (
   userId: string,
   limit = 50
 ): Promise<PreferenceOutboxMutation[]> => {
-  const rows = await database.all<PendingOutboxRow>(
-    `SELECT
-       id,
-       user_id,
-       operation_id,
-       payload_json,
-       created_at,
-       updated_at,
-       attempts
-     FROM outbox
-     WHERE user_id = ?
-       AND entity_type = 'preferences'
-       AND processed_at IS NULL
-     ORDER BY created_at ASC
-     LIMIT ?;`,
-    [userId, limit]
-  );
+  const pendingMutations = await listPendingMutations(database, userId, PREFERENCES_ENTITY_TYPE, limit);
+  const rows: PendingOutboxRow[] = pendingMutations.map((mutation) => {
+    return {
+      outboxId: mutation.outboxId,
+      userId: mutation.userId,
+      operationId: mutation.operationId,
+      payload: mutation.payload,
+      createdAt: mutation.createdAt,
+      attempts: mutation.attempts,
+    };
+  });
 
   const mutations: PreferenceOutboxMutation[] = [];
 
   for (const row of rows) {
-    let parsedPayload: unknown;
-
-    try {
-      parsedPayload = JSON.parse(row.payload_json);
-    } catch (error) {
-      throw new Error(`Invalid preference outbox payload for row ${row.id}: ${(error as Error).message}`);
-    }
+    const parsedPayload = row.payload;
 
     if (!isPreferencePayload(parsedPayload)) {
-      throw new Error(`Invalid preference outbox shape for row ${row.id}.`);
+      throw new Error(`Invalid preference outbox shape for row ${row.outboxId}.`);
     }
 
     mutations.push({
-      outboxId: row.id,
-      userId: row.user_id,
-      operationId: row.operation_id,
-      createdAt: row.created_at,
+      outboxId: row.outboxId,
+      userId: row.userId,
+      operationId: row.operationId,
+      createdAt: row.createdAt,
       updatedAt: parsedPayload.updatedAt,
       attempts: Number(row.attempts),
       preferences: normalizeHexagonPreferences(parsedPayload.preferences),
@@ -477,16 +442,7 @@ export const listPendingPreferenceMutations = async (
  * @param outboxId
  */
 export const markPreferenceMutationProcessed = async (database: DatabaseAdapter, outboxId: string): Promise<void> => {
-  const timestamp = nowIso();
-
-  await database.run(
-    `UPDATE outbox
-     SET processed_at = ?,
-         updated_at = ?,
-         last_error = NULL
-     WHERE id = ?;`,
-    [timestamp, timestamp, outboxId]
-  );
+  await markMutationProcessed(database, outboxId);
 };
 
 /**
@@ -500,16 +456,7 @@ export const markPreferenceMutationFailed = async (
   outboxId: string,
   errorMessage: string
 ): Promise<void> => {
-  const timestamp = nowIso();
-
-  await database.run(
-    `UPDATE outbox
-     SET attempts = attempts + 1,
-         last_error = ?,
-         updated_at = ?
-     WHERE id = ?;`,
-    [errorMessage, timestamp, outboxId]
-  );
+  await markMutationFailed(database, outboxId, errorMessage);
 };
 
 /**
@@ -522,30 +469,19 @@ export const getPreferenceSyncState = async (
   database: DatabaseAdapter,
   userId: string
 ): Promise<PreferenceSyncState | null> => {
-  const row = await database.get<SyncStateRow>(
-    `SELECT
-       user_id,
-       last_pulled_at,
-       last_pushed_at,
-       remote_cursor,
-       last_synced_operation_id,
-       updated_at
-     FROM sync_state
-     WHERE user_id = ?;`,
-    [userId]
-  );
+  const row = await getSyncState(database, userId, PREFERENCES_ENTITY_TYPE);
 
   if (!row) {
     return null;
   }
 
   return {
-    userId: row.user_id,
-    lastPulledAt: row.last_pulled_at,
-    lastPushedAt: row.last_pushed_at,
-    remoteCursor: row.remote_cursor,
-    lastSyncedOperationId: row.last_synced_operation_id,
-    updatedAt: row.updated_at,
+    userId: row.userId,
+    lastPulledAt: row.lastPulledAt,
+    lastPushedAt: row.lastPushedAt,
+    remoteCursor: row.remoteCursor,
+    lastSyncedOperationId: row.lastSyncedOperationId,
+    updatedAt: row.updatedAt,
   };
 };
 
@@ -568,64 +504,24 @@ export const updatePreferenceSyncState = async (
   database: DatabaseAdapter,
   options: UpdatePreferenceSyncStateOptions
 ): Promise<PreferenceSyncState> => {
-  const existing = await getPreferenceSyncState(database, options.userId);
-
-  const nextState: PreferenceSyncState = {
+  const nextState = await updateSyncState(database, {
     userId: options.userId,
-    lastPulledAt: existing?.lastPulledAt ?? null,
-    lastPushedAt: existing?.lastPushedAt ?? null,
-    remoteCursor: existing?.remoteCursor ?? null,
-    lastSyncedOperationId: existing?.lastSyncedOperationId ?? null,
-    updatedAt: options.updatedAt ?? nowIso(),
-  };
-
-  if ('lastPulledAt' in options) {
-    nextState.lastPulledAt = options.lastPulledAt ?? null;
-  }
-
-  if ('lastPushedAt' in options) {
-    nextState.lastPushedAt = options.lastPushedAt ?? null;
-  }
-
-  if ('remoteCursor' in options) {
-    nextState.remoteCursor = options.remoteCursor ?? null;
-  }
-
-  if ('lastSyncedOperationId' in options) {
-    nextState.lastSyncedOperationId = options.lastSyncedOperationId ?? null;
-  }
-
-  await database.transaction(async (tx) => {
-    await ensureUserExists(tx, options.userId, nextState.updatedAt);
-
-    await tx.run(
-      `INSERT INTO sync_state (
-        user_id,
-        last_pulled_at,
-        last_pushed_at,
-        remote_cursor,
-        last_synced_operation_id,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET
-        last_pulled_at = excluded.last_pulled_at,
-        last_pushed_at = excluded.last_pushed_at,
-        remote_cursor = excluded.remote_cursor,
-        last_synced_operation_id = excluded.last_synced_operation_id,
-        updated_at = excluded.updated_at;`,
-      [
-        nextState.userId,
-        nextState.lastPulledAt,
-        nextState.lastPushedAt,
-        nextState.remoteCursor,
-        nextState.lastSyncedOperationId,
-        nextState.updatedAt,
-      ]
-    );
+    entityType: PREFERENCES_ENTITY_TYPE,
+    lastPulledAt: options.lastPulledAt,
+    lastPushedAt: options.lastPushedAt,
+    remoteCursor: options.remoteCursor,
+    lastSyncedOperationId: options.lastSyncedOperationId,
+    updatedAt: options.updatedAt,
   });
 
-  return nextState;
+  return {
+    userId: nextState.userId,
+    lastPulledAt: nextState.lastPulledAt,
+    lastPushedAt: nextState.lastPushedAt,
+    remoteCursor: nextState.remoteCursor,
+    lastSyncedOperationId: nextState.lastSyncedOperationId,
+    updatedAt: nextState.updatedAt,
+  };
 };
 
 export { toHexagonPreferenceValues };

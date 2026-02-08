@@ -75,6 +75,7 @@ export interface OutboxRow {
 
 export interface SyncStateRow {
   user_id: string;
+  entity_type: string;
   last_pulled_at: string | null;
   last_pushed_at: string | null;
   remote_cursor: string | null;

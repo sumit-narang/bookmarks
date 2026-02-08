@@ -188,7 +188,7 @@ test('CLI smoke: db:reset + db:inspect produce expected schema summary', async (
     const summary = parseSummaryJson(inspectOutput.stdout);
 
     for (const tableName of expectedTables) {
-      const expectedCount = tableName === 'schema_migrations' ? 1 : 0;
+      const expectedCount = tableName === 'schema_migrations' ? 2 : 0;
       assert.equal(summary[tableName], expectedCount);
     }
 

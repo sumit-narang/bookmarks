@@ -9,15 +9,20 @@
 import { createUuid, nowIso } from '../../core/src';
 import type { DatabaseAdapter } from '../../db/src';
 import type { CollectionRow, PlaceRow } from '../../schema/src';
+import { createOutboxEntry, listPendingMutations } from '../../sync/src';
 import type { PlaceRecord } from '../../places/src';
 import type {
+  CollectionOutboxMutation,
   CollectionInput,
   CollectionRecord,
+  CollectionSyncOperation,
+  CollectionSyncOperationType,
   CreateCollectionOptions,
   UpdateCollectionOptions,
   AddPlaceToCollectionOptions,
   RemovePlaceFromCollectionOptions,
   ListCollectionPlacesOptions,
+  ValidatedCollectionInput,
 } from './types';
 import { validateCollectionInput } from './validation';
 
@@ -30,6 +35,31 @@ interface CollectionRowWithCount extends CollectionRow {
 interface PlaceRowWithSaved extends PlaceRow {
   is_saved: number;
 }
+
+interface CollectionVersionRow {
+  id: string;
+  user_id: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+interface CollectionPlaceVersionRow {
+  place_id: string;
+  deleted_at: string | null;
+  position: number;
+}
+
+interface CollectionOutboxPayload {
+  userId: string;
+  collectionId: string;
+  operationType: CollectionSyncOperationType;
+  updatedAt: string;
+  collection: CollectionInput | null;
+  placeId: string | null;
+  placeIds?: string[];
+}
+
+const COLLECTIONS_ENTITY_TYPE = 'collections';
 
 // ---------------------------------------------------------------------------
 // Private helpers
@@ -75,6 +105,239 @@ const mapPlaceRowToRecord = (row: PlaceRowWithSaved): PlaceRecord => {
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
   };
+};
+
+const toCollectionInput = (validated: ValidatedCollectionInput): CollectionInput => {
+  return {
+    name: validated.name,
+    coverImage: validated.coverImage,
+  };
+};
+
+const compareCollectionTimestamps = (leftUpdatedAt: string, rightUpdatedAt: string): number => {
+  if (leftUpdatedAt > rightUpdatedAt) {
+    return 1;
+  }
+
+  if (leftUpdatedAt < rightUpdatedAt) {
+    return -1;
+  }
+
+  return 0;
+};
+
+const readCollectionVersion = async (
+  database: DatabaseAdapter,
+  userId: string,
+  collectionId: string
+): Promise<CollectionVersionRow | null> => {
+  return database.get<CollectionVersionRow>(
+    `SELECT id, user_id, updated_at, deleted_at
+     FROM collections
+     WHERE id = ? AND user_id = ?;`,
+    [collectionId, userId]
+  );
+};
+
+const isCollectionOutboxPayload = (payload: unknown): payload is CollectionOutboxPayload => {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  const candidate = payload as Record<string, unknown>;
+
+  if (
+    typeof candidate.userId !== 'string'
+    || typeof candidate.collectionId !== 'string'
+    || typeof candidate.updatedAt !== 'string'
+    || typeof candidate.operationType !== 'string'
+  ) {
+    return false;
+  }
+
+  if (
+    candidate.operationType !== 'create'
+    && candidate.operationType !== 'update'
+    && candidate.operationType !== 'delete'
+    && candidate.operationType !== 'add-place'
+    && candidate.operationType !== 'remove-place'
+    && candidate.operationType !== 'upsert'
+  ) {
+    return false;
+  }
+
+  if (candidate.placeId !== null && typeof candidate.placeId !== 'string') {
+    return false;
+  }
+
+  if (candidate.collection !== null && candidate.collection !== undefined) {
+    if (!candidate.collection || typeof candidate.collection !== 'object') {
+      return false;
+    }
+
+    try {
+      validateCollectionInput(candidate.collection as CollectionInput);
+    } catch {
+      return false;
+    }
+  }
+
+  if (candidate.placeIds !== undefined) {
+    if (!Array.isArray(candidate.placeIds)) {
+      return false;
+    }
+
+    for (const placeId of candidate.placeIds) {
+      if (typeof placeId !== 'string') {
+        return false;
+      }
+    }
+  }
+
+  return true;
+};
+
+const recordCollectionOutboxMutation = async (
+  database: DatabaseAdapter,
+  payload: CollectionOutboxPayload,
+  operationId: string
+): Promise<void> => {
+  await createOutboxEntry(database, {
+    userId: payload.userId,
+    entityType: COLLECTIONS_ENTITY_TYPE,
+    entityId: payload.collectionId,
+    operationType: payload.operationType,
+    operationId,
+    payloadJson: JSON.stringify(payload),
+  });
+};
+
+const upsertCollectionRow = async (
+  database: DatabaseAdapter,
+  userId: string,
+  collectionId: string,
+  input: ValidatedCollectionInput,
+  updatedAt: string
+): Promise<void> => {
+  const existing = await readCollectionVersion(database, userId, collectionId);
+
+  if (existing) {
+    await database.run(
+      `UPDATE collections SET
+         name = ?,
+         cover_image = ?,
+         updated_at = ?,
+         deleted_at = NULL
+       WHERE id = ? AND user_id = ?;`,
+      [input.name, input.coverImage, updatedAt, collectionId, userId]
+    );
+    return;
+  }
+
+  await database.run(
+    `INSERT INTO collections (id, user_id, name, cover_image, created_at, updated_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL);`,
+    [collectionId, userId, input.name, input.coverImage, updatedAt, updatedAt]
+  );
+};
+
+const touchCollectionTimestamp = async (
+  database: DatabaseAdapter,
+  userId: string,
+  collectionId: string,
+  updatedAt: string
+): Promise<void> => {
+  await database.run(
+    `UPDATE collections SET updated_at = ?
+     WHERE id = ? AND user_id = ?;`,
+    [updatedAt, collectionId, userId]
+  );
+};
+
+const placeExistsForUser = async (
+  database: DatabaseAdapter,
+  userId: string,
+  placeId: string
+): Promise<boolean> => {
+  const place = await database.get<{ id: string }>(
+    `SELECT id FROM places
+     WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
+    [placeId, userId]
+  );
+
+  return Boolean(place);
+};
+
+const reconcileCollectionMemberships = async (
+  database: DatabaseAdapter,
+  userId: string,
+  collectionId: string,
+  remotePlaceIds: string[],
+  updatedAt: string
+): Promise<void> => {
+  const dedupedRemotePlaceIds: string[] = [];
+  const seenRemoteIds = new Set<string>();
+
+  for (const placeId of remotePlaceIds) {
+    if (!seenRemoteIds.has(placeId)) {
+      dedupedRemotePlaceIds.push(placeId);
+      seenRemoteIds.add(placeId);
+    }
+  }
+
+  const existingMemberships = await database.all<CollectionPlaceVersionRow>(
+    `SELECT place_id, deleted_at, position
+     FROM collection_places
+     WHERE collection_id = ?;`,
+    [collectionId]
+  );
+
+  const existingByPlaceId = new Map<string, CollectionPlaceVersionRow>();
+
+  for (const membership of existingMemberships) {
+    existingByPlaceId.set(membership.place_id, membership);
+  }
+
+  let position = 0;
+
+  for (const placeId of dedupedRemotePlaceIds) {
+    if (!(await placeExistsForUser(database, userId, placeId))) {
+      continue;
+    }
+
+    const existingMembership = existingByPlaceId.get(placeId);
+
+    if (existingMembership) {
+      await database.run(
+        `UPDATE collection_places
+         SET deleted_at = NULL,
+             position = ?,
+             updated_at = ?
+         WHERE collection_id = ? AND place_id = ?;`,
+        [position, updatedAt, collectionId, placeId]
+      );
+    } else {
+      await database.run(
+        `INSERT INTO collection_places (collection_id, place_id, position, created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, NULL);`,
+        [collectionId, placeId, position, updatedAt, updatedAt]
+      );
+    }
+
+    position += 1;
+  }
+
+  for (const membership of existingMemberships) {
+    if (!seenRemoteIds.has(membership.place_id) && membership.deleted_at === null) {
+      await database.run(
+        `UPDATE collection_places
+         SET deleted_at = ?,
+             updated_at = ?
+         WHERE collection_id = ? AND place_id = ?;`,
+        [updatedAt, updatedAt, collectionId, membership.place_id]
+      );
+    }
+  }
 };
 
 /**
@@ -138,8 +401,12 @@ export const createCollection = async (
   options: CreateCollectionOptions
 ): Promise<CollectionRecord> => {
   const validated = validateCollectionInput(options.input);
-  const timestamp = nowIso();
-  const collectionId = createUuid();
+  const shouldRecordOutbox = options.recordOutbox ?? true;
+  const timestamp = options.updatedAt ?? nowIso();
+  const collectionId = options.collectionId ?? createUuid();
+  const nextOperationId = options.operationId === undefined
+    ? (shouldRecordOutbox ? createUuid() : null)
+    : options.operationId;
 
   await database.transaction(async (tx) => {
     await ensureUserExists(tx, options.userId, timestamp);
@@ -149,6 +416,17 @@ export const createCollection = async (
        VALUES (?, ?, ?, ?, ?, ?, NULL);`,
       [collectionId, options.userId, validated.name, validated.coverImage, timestamp, timestamp]
     );
+
+    if (shouldRecordOutbox && nextOperationId) {
+      await recordCollectionOutboxMutation(tx, {
+        userId: options.userId,
+        collectionId,
+        operationType: 'create',
+        updatedAt: timestamp,
+        collection: toCollectionInput(validated),
+        placeId: null,
+      }, nextOperationId);
+    }
   });
 
   const record = await getCollection(database, options.userId, collectionId);
@@ -218,17 +496,34 @@ export const updateCollection = async (
   options: UpdateCollectionOptions
 ): Promise<CollectionRecord> => {
   const validated = validateCollectionInput(options.input);
-  const timestamp = nowIso();
+  const shouldRecordOutbox = options.recordOutbox ?? true;
+  const timestamp = options.updatedAt ?? nowIso();
+  const nextOperationId = options.operationId === undefined
+    ? (shouldRecordOutbox ? createUuid() : null)
+    : options.operationId;
 
-  const result = await database.run(
-    `UPDATE collections SET name = ?, cover_image = ?, updated_at = ?
-     WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
-    [validated.name, validated.coverImage, timestamp, options.collectionId, options.userId]
-  );
+  await database.transaction(async (tx) => {
+    const result = await tx.run(
+      `UPDATE collections SET name = ?, cover_image = ?, updated_at = ?
+       WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
+      [validated.name, validated.coverImage, timestamp, options.collectionId, options.userId]
+    );
 
-  if (result.changes === 0) {
-    throw new Error(`Collection ${options.collectionId} not found for user ${options.userId}.`);
-  }
+    if (result.changes === 0) {
+      throw new Error(`Collection ${options.collectionId} not found for user ${options.userId}.`);
+    }
+
+    if (shouldRecordOutbox && nextOperationId) {
+      await recordCollectionOutboxMutation(tx, {
+        userId: options.userId,
+        collectionId: options.collectionId,
+        operationType: 'update',
+        updatedAt: timestamp,
+        collection: toCollectionInput(validated),
+        placeId: null,
+      }, nextOperationId);
+    }
+  });
 
   const record = await getCollection(database, options.userId, options.collectionId);
 
@@ -238,6 +533,12 @@ export const updateCollection = async (
 
   return record;
 };
+
+export interface RemoveCollectionOptions {
+  updatedAt?: string;
+  operationId?: string | null;
+  recordOutbox?: boolean;
+}
 
 /**
  * Soft-delete a collection by setting deleted_at timestamp.
@@ -249,17 +550,46 @@ export const updateCollection = async (
 export const removeCollection = async (
   database: DatabaseAdapter,
   userId: string,
-  collectionId: string
+  collectionId: string,
+  options: RemoveCollectionOptions = {}
 ): Promise<boolean> => {
-  const timestamp = nowIso();
+  const shouldRecordOutbox = options.recordOutbox ?? true;
+  const timestamp = options.updatedAt ?? nowIso();
+  const nextOperationId = options.operationId === undefined
+    ? (shouldRecordOutbox ? createUuid() : null)
+    : options.operationId;
+  let removed = false;
 
-  const result = await database.run(
-    `UPDATE collections SET deleted_at = ?, updated_at = ?
-     WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
-    [timestamp, timestamp, collectionId, userId]
-  );
+  await database.transaction(async (tx) => {
+    const result = await tx.run(
+      `UPDATE collections SET deleted_at = ?, updated_at = ?
+       WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
+      [timestamp, timestamp, collectionId, userId]
+    );
 
-  return result.changes > 0;
+    removed = result.changes > 0;
+
+    if (removed) {
+      await tx.run(
+        `UPDATE collection_places SET deleted_at = ?, updated_at = ?
+         WHERE collection_id = ? AND deleted_at IS NULL;`,
+        [timestamp, timestamp, collectionId]
+      );
+    }
+
+    if (removed && shouldRecordOutbox && nextOperationId) {
+      await recordCollectionOutboxMutation(tx, {
+        userId,
+        collectionId,
+        operationType: 'delete',
+        updatedAt: timestamp,
+        collection: null,
+        placeId: null,
+      }, nextOperationId);
+    }
+  });
+
+  return removed;
 };
 
 // ---------------------------------------------------------------------------
@@ -277,7 +607,11 @@ export const addPlaceToCollection = async (
   database: DatabaseAdapter,
   options: AddPlaceToCollectionOptions
 ): Promise<boolean> => {
-  const timestamp = nowIso();
+  const shouldRecordOutbox = options.recordOutbox ?? true;
+  const timestamp = options.updatedAt ?? nowIso();
+  const nextOperationId = options.operationId === undefined
+    ? (shouldRecordOutbox ? createUuid() : null)
+    : options.operationId;
 
   return await database.transaction(async (tx) => {
     // Verify collection belongs to user and is not deleted
@@ -329,6 +663,19 @@ export const addPlaceToCollection = async (
         [nextPosition, timestamp, options.collectionId, options.placeId]
       );
 
+      await touchCollectionTimestamp(tx, options.userId, options.collectionId, timestamp);
+
+      if (shouldRecordOutbox && nextOperationId) {
+        await recordCollectionOutboxMutation(tx, {
+          userId: options.userId,
+          collectionId: options.collectionId,
+          operationType: 'add-place',
+          updatedAt: timestamp,
+          collection: null,
+          placeId: options.placeId,
+        }, nextOperationId);
+      }
+
       return true;
     }
 
@@ -346,6 +693,19 @@ export const addPlaceToCollection = async (
       [options.collectionId, options.placeId, nextPosition, timestamp, timestamp]
     );
 
+    await touchCollectionTimestamp(tx, options.userId, options.collectionId, timestamp);
+
+    if (shouldRecordOutbox && nextOperationId) {
+      await recordCollectionOutboxMutation(tx, {
+        userId: options.userId,
+        collectionId: options.collectionId,
+        operationType: 'add-place',
+        updatedAt: timestamp,
+        collection: null,
+        placeId: options.placeId,
+      }, nextOperationId);
+    }
+
     return true;
   });
 };
@@ -360,15 +720,40 @@ export const removePlaceFromCollection = async (
   database: DatabaseAdapter,
   options: RemovePlaceFromCollectionOptions
 ): Promise<boolean> => {
-  const timestamp = nowIso();
+  const shouldRecordOutbox = options.recordOutbox ?? true;
+  const timestamp = options.updatedAt ?? nowIso();
+  const nextOperationId = options.operationId === undefined
+    ? (shouldRecordOutbox ? createUuid() : null)
+    : options.operationId;
 
-  const result = await database.run(
-    `UPDATE collection_places SET deleted_at = ?, updated_at = ?
-     WHERE collection_id = ? AND place_id = ? AND deleted_at IS NULL;`,
-    [timestamp, timestamp, options.collectionId, options.placeId]
-  );
+  return await database.transaction(async (tx) => {
+    const result = await tx.run(
+      `UPDATE collection_places SET deleted_at = ?, updated_at = ?
+       WHERE collection_id = ? AND place_id = ? AND deleted_at IS NULL;`,
+      [timestamp, timestamp, options.collectionId, options.placeId]
+    );
 
-  return result.changes > 0;
+    const removed = result.changes > 0;
+
+    if (!removed) {
+      return false;
+    }
+
+    await touchCollectionTimestamp(tx, options.userId, options.collectionId, timestamp);
+
+    if (shouldRecordOutbox && nextOperationId) {
+      await recordCollectionOutboxMutation(tx, {
+        userId: options.userId,
+        collectionId: options.collectionId,
+        operationType: 'remove-place',
+        updatedAt: timestamp,
+        collection: null,
+        placeId: options.placeId,
+      }, nextOperationId);
+    }
+
+    return true;
+  });
 };
 
 /**
@@ -403,4 +788,201 @@ export const listCollectionPlaces = async (
   );
 
   return rows.map(mapPlaceRowToRecord);
+};
+
+/**
+ * Read all pending collection mutations from the local outbox.
+ * @param database
+ * @param userId
+ * @param limit
+ * @returns {Promise<CollectionOutboxMutation[]>}
+ */
+export const listPendingCollectionMutations = async (
+  database: DatabaseAdapter,
+  userId: string,
+  limit = 50
+): Promise<CollectionOutboxMutation[]> => {
+  const rows = await listPendingMutations(database, userId, COLLECTIONS_ENTITY_TYPE, limit);
+  const mutations: CollectionOutboxMutation[] = [];
+
+  for (const row of rows) {
+    if (!isCollectionOutboxPayload(row.payload)) {
+      throw new Error(`Invalid collection outbox payload for row ${row.outboxId}.`);
+    }
+
+    mutations.push({
+      outboxId: row.outboxId,
+      userId: row.userId,
+      collectionId: row.entityId,
+      operationId: row.operationId,
+      operationType: row.payload.operationType,
+      updatedAt: row.payload.updatedAt,
+      attempts: row.attempts,
+      collection: row.payload.collection,
+      placeId: row.payload.placeId,
+    });
+  }
+
+  return mutations;
+};
+
+/**
+ * Apply a remote collection operation if it is newer than local collection state.
+ * @param database
+ * @param operation
+ * @returns {Promise<{ applied: boolean; collection: CollectionRecord | null }>}
+ */
+export const applyCollectionSyncOperation = async (
+  database: DatabaseAdapter,
+  operation: CollectionSyncOperation
+): Promise<{ applied: boolean; collection: CollectionRecord | null }> => {
+  let applied = false;
+  let collection: CollectionRecord | null = null;
+
+  await database.transaction(async (tx) => {
+    const existing = await readCollectionVersion(tx, operation.userId, operation.collectionId);
+
+    if (existing && compareCollectionTimestamps(operation.updatedAt, existing.updated_at) <= 0) {
+      collection = existing.deleted_at ? null : await getCollection(tx, operation.userId, operation.collectionId);
+      return;
+    }
+
+    switch (operation.operationType) {
+      case 'delete': {
+        const result = await tx.run(
+          `UPDATE collections
+           SET deleted_at = ?,
+               updated_at = ?
+           WHERE id = ? AND user_id = ?;`,
+          [operation.updatedAt, operation.updatedAt, operation.collectionId, operation.userId]
+        );
+
+        if (result.changes > 0) {
+          await tx.run(
+            `UPDATE collection_places
+             SET deleted_at = ?,
+                 updated_at = ?
+             WHERE collection_id = ? AND deleted_at IS NULL;`,
+            [operation.updatedAt, operation.updatedAt, operation.collectionId]
+          );
+          applied = true;
+        }
+
+        collection = null;
+        return;
+      }
+      case 'create':
+      case 'update':
+      case 'upsert': {
+        if (!operation.collection) {
+          throw new Error('Collection sync upsert operation requires collection data.');
+        }
+
+        const validated = validateCollectionInput(operation.collection);
+        await ensureUserExists(tx, operation.userId, operation.updatedAt);
+        await upsertCollectionRow(tx, operation.userId, operation.collectionId, validated, operation.updatedAt);
+
+        if (operation.placeIds) {
+          await reconcileCollectionMemberships(
+            tx,
+            operation.userId,
+            operation.collectionId,
+            operation.placeIds,
+            operation.updatedAt
+          );
+          await touchCollectionTimestamp(tx, operation.userId, operation.collectionId, operation.updatedAt);
+        }
+
+        applied = true;
+        collection = await getCollection(tx, operation.userId, operation.collectionId);
+        return;
+      }
+      case 'add-place': {
+        if (!operation.placeId) {
+          throw new Error('Collection add-place sync operation requires placeId.');
+        }
+
+        const activeCollection = await tx.get<{ id: string }>(
+          `SELECT id FROM collections
+           WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
+          [operation.collectionId, operation.userId]
+        );
+
+        if (!activeCollection || !(await placeExistsForUser(tx, operation.userId, operation.placeId))) {
+          collection = await getCollection(tx, operation.userId, operation.collectionId);
+          return;
+        }
+
+        const existingMembership = await tx.get<{ deleted_at: string | null }>(
+          `SELECT deleted_at FROM collection_places
+           WHERE collection_id = ? AND place_id = ?;`,
+          [operation.collectionId, operation.placeId]
+        );
+
+        if (existingMembership && existingMembership.deleted_at === null) {
+          collection = await getCollection(tx, operation.userId, operation.collectionId);
+          return;
+        }
+
+        const maxRow = await tx.get<{ max_pos: number | null }>(
+          `SELECT MAX(position) AS max_pos FROM collection_places
+           WHERE collection_id = ? AND deleted_at IS NULL;`,
+          [operation.collectionId]
+        );
+        const nextPosition = (maxRow?.max_pos ?? -1) + 1;
+
+        if (existingMembership) {
+          await tx.run(
+            `UPDATE collection_places
+             SET deleted_at = NULL,
+                 position = ?,
+                 updated_at = ?
+             WHERE collection_id = ? AND place_id = ?;`,
+            [nextPosition, operation.updatedAt, operation.collectionId, operation.placeId]
+          );
+        } else {
+          await tx.run(
+            `INSERT INTO collection_places (collection_id, place_id, position, created_at, updated_at, deleted_at)
+             VALUES (?, ?, ?, ?, ?, NULL);`,
+            [operation.collectionId, operation.placeId, nextPosition, operation.updatedAt, operation.updatedAt]
+          );
+        }
+
+        await touchCollectionTimestamp(tx, operation.userId, operation.collectionId, operation.updatedAt);
+        applied = true;
+        collection = await getCollection(tx, operation.userId, operation.collectionId);
+        return;
+      }
+      case 'remove-place': {
+        if (!operation.placeId) {
+          throw new Error('Collection remove-place sync operation requires placeId.');
+        }
+
+        const result = await tx.run(
+          `UPDATE collection_places
+           SET deleted_at = ?,
+               updated_at = ?
+           WHERE collection_id = ? AND place_id = ? AND deleted_at IS NULL;`,
+          [operation.updatedAt, operation.updatedAt, operation.collectionId, operation.placeId]
+        );
+
+        if (result.changes > 0) {
+          await touchCollectionTimestamp(tx, operation.userId, operation.collectionId, operation.updatedAt);
+          applied = true;
+        }
+
+        collection = await getCollection(tx, operation.userId, operation.collectionId);
+        return;
+      }
+      default: {
+        const unsupportedType: never = operation.operationType;
+        throw new Error(`Unsupported collection sync operation type: ${unsupportedType}`);
+      }
+    }
+  });
+
+  return {
+    applied,
+    collection,
+  };
 };

@@ -47,3 +47,25 @@ export interface PlaceRecord {
   updatedAt: string;
   deletedAt: string | null;
 }
+
+export type PlaceSyncOperationType = 'upsert' | 'delete';
+
+export interface PlaceSyncOperation {
+  userId: string;
+  placeId: string;
+  operationId: string;
+  operationType: PlaceSyncOperationType;
+  updatedAt: string;
+  place: PlaceInput | null;
+}
+
+export interface PlaceOutboxMutation {
+  outboxId: string;
+  userId: string;
+  placeId: string;
+  operationId: string;
+  operationType: PlaceSyncOperationType;
+  updatedAt: string;
+  attempts: number;
+  place: PlaceInput | null;
+}

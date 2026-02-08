@@ -8,13 +8,38 @@
 import { createUuid, nowIso } from '../../core/src';
 import type { DatabaseAdapter } from '../../db/src';
 import type { PlaceRow } from '../../schema/src';
-import type { PlaceInput, PlaceRecord, ValidatedPlaceInput } from './types';
+import { createOutboxEntry, listPendingMutations } from '../../sync/src';
+import type {
+  PlaceInput,
+  PlaceOutboxMutation,
+  PlaceRecord,
+  PlaceSyncOperation,
+  PlaceSyncOperationType,
+  ValidatedPlaceInput,
+} from './types';
 import { validatePlaceInput } from './validation';
 
 /** Extended row returned by queries that join a saved-status column. */
 interface PlaceRowWithSaved extends PlaceRow {
   is_saved: number;
 }
+
+interface PlaceVersionRow {
+  id: string;
+  user_id: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+interface PlaceOutboxPayload {
+  userId: string;
+  placeId: string;
+  operationType: PlaceSyncOperationType;
+  updatedAt: string;
+  place: PlaceInput | null;
+}
+
+const PLACES_ENTITY_TYPE = 'places';
 
 const ensureUserExists = async (database: DatabaseAdapter, userId: string, timestamp: string): Promise<void> => {
   await database.run(
@@ -43,6 +68,92 @@ const mapRowToRecord = (row: PlaceRowWithSaved): PlaceRecord => {
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
   };
+};
+
+const toPlaceInput = (validated: ValidatedPlaceInput): PlaceInput => {
+  return {
+    name: validated.name,
+    address: validated.address,
+    latitude: validated.latitude,
+    longitude: validated.longitude,
+    googlePlaceId: validated.googlePlaceId,
+    rating: validated.rating,
+    notes: validated.notes,
+    imageUrl: validated.imageUrl,
+    metadataJson: validated.metadataJson,
+  };
+};
+
+const isPlaceOutboxPayload = (payload: unknown): payload is PlaceOutboxPayload => {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  const candidate = payload as Record<string, unknown>;
+
+  if (
+    typeof candidate.userId !== 'string'
+    || typeof candidate.placeId !== 'string'
+    || typeof candidate.updatedAt !== 'string'
+    || (candidate.operationType !== 'upsert' && candidate.operationType !== 'delete')
+  ) {
+    return false;
+  }
+
+  if (candidate.operationType === 'delete') {
+    return candidate.place === null;
+  }
+
+  if (!candidate.place || typeof candidate.place !== 'object') {
+    return false;
+  }
+
+  try {
+    validatePlaceInput(candidate.place as PlaceInput);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const readPlaceVersion = async (
+  database: DatabaseAdapter,
+  userId: string,
+  placeId: string
+): Promise<PlaceVersionRow | null> => {
+  return database.get<PlaceVersionRow>(
+    `SELECT id, user_id, updated_at, deleted_at
+     FROM places
+     WHERE id = ? AND user_id = ?;`,
+    [placeId, userId]
+  );
+};
+
+const comparePlaceTimestamps = (leftUpdatedAt: string, rightUpdatedAt: string): number => {
+  if (leftUpdatedAt > rightUpdatedAt) {
+    return 1;
+  }
+
+  if (leftUpdatedAt < rightUpdatedAt) {
+    return -1;
+  }
+
+  return 0;
+};
+
+const recordPlaceOutboxMutation = async (
+  database: DatabaseAdapter,
+  payload: PlaceOutboxPayload,
+  operationId: string
+): Promise<void> => {
+  await createOutboxEntry(database, {
+    userId: payload.userId,
+    entityType: PLACES_ENTITY_TYPE,
+    entityId: payload.placeId,
+    operationType: payload.operationType,
+    operationId,
+    payloadJson: JSON.stringify(payload),
+  });
 };
 
 /**
@@ -76,6 +187,10 @@ const SELECT_PLACE_FIELDS = `
 export interface UpsertPlaceOptions {
   userId: string;
   input: PlaceInput;
+  placeId?: string;
+  updatedAt?: string;
+  operationId?: string | null;
+  recordOutbox?: boolean;
 }
 
 /**
@@ -94,26 +209,30 @@ export const upsertPlace = async (
   options: UpsertPlaceOptions
 ): Promise<PlaceRecord> => {
   const validated = validatePlaceInput(options.input);
-  const timestamp = nowIso();
+  const shouldRecordOutbox = options.recordOutbox ?? true;
+  const timestamp = options.updatedAt ?? nowIso();
+  const nextOperationId = options.operationId === undefined
+    ? (shouldRecordOutbox ? createUuid() : null)
+    : options.operationId;
 
   let placeId: string | null = null;
 
   await database.transaction(async (tx) => {
     await ensureUserExists(tx, options.userId, timestamp);
 
-    // Check for existing place by google_place_id (unique per user)
-    if (validated.googlePlaceId) {
-      const existing = await tx.get<{ id: string }>(
+    if (options.placeId) {
+      const existingById = await tx.get<{ id: string }>(
         `SELECT id FROM places
-         WHERE user_id = ? AND google_place_id = ? AND deleted_at IS NULL;`,
-        [options.userId, validated.googlePlaceId]
+         WHERE id = ? AND user_id = ?;`,
+        [options.placeId, options.userId]
       );
 
-      if (existing) {
-        placeId = existing.id;
+      placeId = options.placeId;
 
+      if (existingById) {
         await tx.run(
           `UPDATE places SET
+            google_place_id = ?,
             name = ?,
             address = ?,
             latitude = ?,
@@ -122,9 +241,11 @@ export const upsertPlace = async (
             notes = ?,
             image_url = ?,
             metadata_json = ?,
-            updated_at = ?
-          WHERE id = ?;`,
+            updated_at = ?,
+            deleted_at = NULL
+          WHERE id = ? AND user_id = ?;`,
           [
+            validated.googlePlaceId,
             validated.name,
             validated.address,
             validated.latitude,
@@ -135,38 +256,112 @@ export const upsertPlace = async (
             validated.metadataJson,
             timestamp,
             placeId,
+            options.userId,
           ]
         );
+      } else {
+        await tx.run(
+          `INSERT INTO places (
+            id, user_id, google_place_id, name, address,
+            latitude, longitude, rating, notes, image_url,
+            metadata_json, created_at, updated_at, deleted_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+          [
+            placeId,
+            options.userId,
+            validated.googlePlaceId,
+            validated.name,
+            validated.address,
+            validated.latitude,
+            validated.longitude,
+            validated.rating,
+            validated.notes,
+            validated.imageUrl,
+            validated.metadataJson,
+            timestamp,
+            timestamp,
+          ]
+        );
+      }
+    } else {
+      // Check for existing place by google_place_id (unique per user)
+      if (validated.googlePlaceId) {
+        const existing = await tx.get<{ id: string }>(
+          `SELECT id FROM places
+           WHERE user_id = ? AND google_place_id = ? AND deleted_at IS NULL;`,
+          [options.userId, validated.googlePlaceId]
+        );
 
-        return;
+        if (existing) {
+          placeId = existing.id;
+
+          await tx.run(
+            `UPDATE places SET
+              name = ?,
+              address = ?,
+              latitude = ?,
+              longitude = ?,
+              rating = ?,
+              notes = ?,
+              image_url = ?,
+              metadata_json = ?,
+              updated_at = ?
+            WHERE id = ? AND user_id = ?;`,
+            [
+              validated.name,
+              validated.address,
+              validated.latitude,
+              validated.longitude,
+              validated.rating,
+              validated.notes,
+              validated.imageUrl,
+              validated.metadataJson,
+              timestamp,
+              placeId,
+              options.userId,
+            ]
+          );
+        }
+      }
+
+      if (!placeId) {
+        // Insert new place row
+        placeId = createUuid();
+
+        await tx.run(
+          `INSERT INTO places (
+            id, user_id, google_place_id, name, address,
+            latitude, longitude, rating, notes, image_url,
+            metadata_json, created_at, updated_at, deleted_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+          [
+            placeId,
+            options.userId,
+            validated.googlePlaceId,
+            validated.name,
+            validated.address,
+            validated.latitude,
+            validated.longitude,
+            validated.rating,
+            validated.notes,
+            validated.imageUrl,
+            validated.metadataJson,
+            timestamp,
+            timestamp,
+          ]
+        );
       }
     }
 
-    // Insert new place row
-    placeId = createUuid();
-
-    await tx.run(
-      `INSERT INTO places (
-        id, user_id, google_place_id, name, address,
-        latitude, longitude, rating, notes, image_url,
-        metadata_json, created_at, updated_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
-      [
+    if (shouldRecordOutbox && nextOperationId && placeId) {
+      await recordPlaceOutboxMutation(tx, {
+        userId: options.userId,
         placeId,
-        options.userId,
-        validated.googlePlaceId,
-        validated.name,
-        validated.address,
-        validated.latitude,
-        validated.longitude,
-        validated.rating,
-        validated.notes,
-        validated.imageUrl,
-        validated.metadataJson,
-        timestamp,
-        timestamp,
-      ]
-    );
+        operationType: 'upsert',
+        updatedAt: timestamp,
+        place: toPlaceInput(validated),
+      }, nextOperationId);
+    }
   });
 
   if (!placeId) {
@@ -229,25 +424,195 @@ export const getPlace = async (
   return mapRowToRecord(row);
 };
 
+export interface RemovePlaceOptions {
+  updatedAt?: string;
+  operationId?: string | null;
+  recordOutbox?: boolean;
+}
+
 /**
  * Soft-delete a place by setting deleted_at timestamp.
  * @param database
  * @param userId
  * @param placeId
+ * @param options
  * @returns {Promise<boolean>} true if a row was updated
  */
 export const removePlace = async (
   database: DatabaseAdapter,
   userId: string,
-  placeId: string
+  placeId: string,
+  options: RemovePlaceOptions = {}
 ): Promise<boolean> => {
-  const timestamp = nowIso();
+  const shouldRecordOutbox = options.recordOutbox ?? true;
+  const timestamp = options.updatedAt ?? nowIso();
+  const nextOperationId = options.operationId === undefined
+    ? (shouldRecordOutbox ? createUuid() : null)
+    : options.operationId;
 
-  const result = await database.run(
-    `UPDATE places SET deleted_at = ?, updated_at = ?
-     WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
-    [timestamp, timestamp, placeId, userId]
-  );
+  let removed = false;
 
-  return result.changes > 0;
+  await database.transaction(async (tx) => {
+    const result = await tx.run(
+      `UPDATE places SET deleted_at = ?, updated_at = ?
+       WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
+      [timestamp, timestamp, placeId, userId]
+    );
+
+    removed = result.changes > 0;
+
+    if (removed && shouldRecordOutbox && nextOperationId) {
+      await recordPlaceOutboxMutation(tx, {
+        userId,
+        placeId,
+        operationType: 'delete',
+        updatedAt: timestamp,
+        place: null,
+      }, nextOperationId);
+    }
+  });
+
+  return removed;
+};
+
+/**
+ * Read all pending place mutations from the local outbox.
+ * @param database
+ * @param userId
+ * @param limit
+ * @returns {Promise<PlaceOutboxMutation[]>}
+ */
+export const listPendingPlaceMutations = async (
+  database: DatabaseAdapter,
+  userId: string,
+  limit = 50
+): Promise<PlaceOutboxMutation[]> => {
+  const rows = await listPendingMutations(database, userId, PLACES_ENTITY_TYPE, limit);
+  const mutations: PlaceOutboxMutation[] = [];
+
+  for (const row of rows) {
+    if (!isPlaceOutboxPayload(row.payload)) {
+      throw new Error(`Invalid place outbox payload for row ${row.outboxId}.`);
+    }
+
+    mutations.push({
+      outboxId: row.outboxId,
+      userId: row.userId,
+      placeId: row.entityId,
+      operationId: row.operationId,
+      operationType: row.payload.operationType,
+      updatedAt: row.payload.updatedAt,
+      attempts: row.attempts,
+      place: row.payload.place,
+    });
+  }
+
+  return mutations;
+};
+
+/**
+ * Apply a remote place operation if it is newer than the local row.
+ * @param database
+ * @param operation
+ * @returns {Promise<{ applied: boolean; place: PlaceRecord | null }>}
+ */
+export const applyPlaceSyncOperation = async (
+  database: DatabaseAdapter,
+  operation: PlaceSyncOperation
+): Promise<{ applied: boolean; place: PlaceRecord | null }> => {
+  let applied = false;
+  let place: PlaceRecord | null = null;
+
+  await database.transaction(async (tx) => {
+    const existing = await readPlaceVersion(tx, operation.userId, operation.placeId);
+
+    if (existing && comparePlaceTimestamps(operation.updatedAt, existing.updated_at) <= 0) {
+      place = existing.deleted_at ? null : await getPlace(tx, operation.userId, operation.placeId);
+      return;
+    }
+
+    if (operation.operationType === 'delete') {
+      const result = await tx.run(
+        `UPDATE places
+         SET deleted_at = ?,
+             updated_at = ?
+         WHERE id = ? AND user_id = ?;`,
+        [operation.updatedAt, operation.updatedAt, operation.placeId, operation.userId]
+      );
+
+      applied = result.changes > 0;
+      place = null;
+      return;
+    }
+
+    if (!operation.place) {
+      throw new Error('Place upsert sync operation requires place data.');
+    }
+
+    const validated = validatePlaceInput(operation.place);
+    await ensureUserExists(tx, operation.userId, operation.updatedAt);
+
+    if (existing) {
+      await tx.run(
+        `UPDATE places SET
+          google_place_id = ?,
+          name = ?,
+          address = ?,
+          latitude = ?,
+          longitude = ?,
+          rating = ?,
+          notes = ?,
+          image_url = ?,
+          metadata_json = ?,
+          updated_at = ?,
+          deleted_at = NULL
+        WHERE id = ? AND user_id = ?;`,
+        [
+          validated.googlePlaceId,
+          validated.name,
+          validated.address,
+          validated.latitude,
+          validated.longitude,
+          validated.rating,
+          validated.notes,
+          validated.imageUrl,
+          validated.metadataJson,
+          operation.updatedAt,
+          operation.placeId,
+          operation.userId,
+        ]
+      );
+    } else {
+      await tx.run(
+        `INSERT INTO places (
+          id, user_id, google_place_id, name, address,
+          latitude, longitude, rating, notes, image_url,
+          metadata_json, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+        [
+          operation.placeId,
+          operation.userId,
+          validated.googlePlaceId,
+          validated.name,
+          validated.address,
+          validated.latitude,
+          validated.longitude,
+          validated.rating,
+          validated.notes,
+          validated.imageUrl,
+          validated.metadataJson,
+          operation.updatedAt,
+          operation.updatedAt,
+        ]
+      );
+    }
+
+    applied = true;
+    place = await getPlace(tx, operation.userId, operation.placeId);
+  });
+
+  return {
+    applied,
+    place,
+  };
 };
