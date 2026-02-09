@@ -43,6 +43,8 @@ interface ParsedArgs {
   databasePath: string;
   userId: string;
   remoteUrl: string;
+  maxAttempts: number | undefined;
+  batchLimit: number | undefined;
   theme: string | undefined;
   variant: string | undefined;
   size: number | undefined;
@@ -104,6 +106,8 @@ const parseArguments = (argv: string[]): ParsedArgs => {
   let databasePath = defaultDatabasePath;
   let userId = defaultUserId;
   let remoteUrl = defaultRemoteUrl;
+  let maxAttempts: number | undefined;
+  let batchLimit: number | undefined;
   let theme: string | undefined;
   let variant: string | undefined;
   let size: number | undefined;
@@ -144,6 +148,24 @@ const parseArguments = (argv: string[]): ParsedArgs => {
       }
       case '--remote-url': {
         remoteUrl = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--max-attempts': {
+        const rawMaxAttempts = parseNumberValue(parseRequiredValue(argv, index, current), current);
+        if (!Number.isInteger(rawMaxAttempts) || rawMaxAttempts < 1) {
+          throw new Error('--max-attempts must be a positive integer.');
+        }
+        maxAttempts = rawMaxAttempts;
+        index += 1;
+        break;
+      }
+      case '--batch-limit': {
+        const rawBatchLimit = parseNumberValue(parseRequiredValue(argv, index, current), current);
+        if (!Number.isInteger(rawBatchLimit) || rawBatchLimit < 1) {
+          throw new Error('--batch-limit must be a positive integer.');
+        }
+        batchLimit = rawBatchLimit;
         index += 1;
         break;
       }
@@ -251,6 +273,8 @@ const parseArguments = (argv: string[]): ParsedArgs => {
     databasePath,
     userId,
     remoteUrl,
+    maxAttempts,
+    batchLimit,
     theme,
     variant,
     size,
@@ -410,7 +434,9 @@ const runPreferencesSync = async (databasePath: string, userId: string, remoteUr
 const runSyncPushInternal = async (
   database: ReturnType<typeof createNodeSqliteAdapter>,
   userId: string,
-  remoteUrl: string
+  remoteUrl: string,
+  maxAttempts?: number,
+  batchLimit?: number
 ): Promise<{
   preferences: Awaited<ReturnType<typeof pushPreferenceOutbox>>;
   places: Awaited<ReturnType<typeof pushPlaceOutbox>>;
@@ -424,18 +450,24 @@ const runSyncPushInternal = async (
     database,
     userId,
     remote: preferencesRemote,
+    maxAttempts,
+    limit: batchLimit,
   });
 
   const places = await pushPlaceOutbox({
     database,
     userId,
     remote: placesRemote,
+    maxAttempts,
+    batchLimit,
   });
 
   const collections = await pushCollectionOutbox({
     database,
     userId,
     remote: collectionsRemote,
+    maxAttempts,
+    batchLimit,
   });
 
   return {
@@ -483,13 +515,13 @@ const runSyncPullInternal = async (
   };
 };
 
-const runSyncPush = async (databasePath: string, userId: string, remoteUrl: string): Promise<void> => {
+const runSyncPush = async (databasePath: string, userId: string, remoteUrl: string, maxAttempts?: number, batchLimit?: number): Promise<void> => {
   ensureParentDirectory(databasePath);
   const database = createNodeSqliteAdapter({ filename: databasePath });
 
   try {
     await migrateDatabase(database, schemaMigrations);
-    const result = await runSyncPushInternal(database, userId, remoteUrl);
+    const result = await runSyncPushInternal(database, userId, remoteUrl, maxAttempts, batchLimit);
     console.log(JSON.stringify(result, null, 2));
   } finally {
     await database.close();
@@ -509,13 +541,13 @@ const runSyncPull = async (databasePath: string, userId: string, remoteUrl: stri
   }
 };
 
-const runSyncRun = async (databasePath: string, userId: string, remoteUrl: string): Promise<void> => {
+const runSyncRun = async (databasePath: string, userId: string, remoteUrl: string, maxAttempts?: number, batchLimit?: number): Promise<void> => {
   ensureParentDirectory(databasePath);
   const database = createNodeSqliteAdapter({ filename: databasePath });
 
   try {
     await migrateDatabase(database, schemaMigrations);
-    const push = await runSyncPushInternal(database, userId, remoteUrl);
+    const push = await runSyncPushInternal(database, userId, remoteUrl, maxAttempts, batchLimit);
     const pull = await runSyncPullInternal(database, userId, remoteUrl);
     console.log(JSON.stringify({ push, pull }, null, 2));
   } finally {
@@ -805,6 +837,8 @@ const printHelp = (): void => {
   console.log('  --db <path>                 Custom SQLite database path');
   console.log(`  --user <id>                 User ID (default: ${defaultUserId})`);
   console.log(`  --remote-url <url>          Backend URL (default: ${defaultRemoteUrl})`);
+  console.log('  --max-attempts <number>       Max retry attempts before dead-letter (default: 5)');
+  console.log('  --batch-limit <number>        Max outbox rows per push batch (default: 50)');
   console.log('  --theme <name>              Hexagon theme');
   console.log('  --variant <name>            Hexagon variant');
   console.log('  --size <number>             Hexagon size');
@@ -848,13 +882,13 @@ const run = async (): Promise<void> => {
       await runPreferencesSync(parsed.databasePath, parsed.userId, parsed.remoteUrl);
       return;
     case 'sync:push':
-      await runSyncPush(parsed.databasePath, parsed.userId, parsed.remoteUrl);
+      await runSyncPush(parsed.databasePath, parsed.userId, parsed.remoteUrl, parsed.maxAttempts, parsed.batchLimit);
       return;
     case 'sync:pull':
       await runSyncPull(parsed.databasePath, parsed.userId, parsed.remoteUrl);
       return;
     case 'sync:run':
-      await runSyncRun(parsed.databasePath, parsed.userId, parsed.remoteUrl);
+      await runSyncRun(parsed.databasePath, parsed.userId, parsed.remoteUrl, parsed.maxAttempts, parsed.batchLimit);
       return;
     case 'places:list':
       await runPlacesList(parsed.databasePath, parsed.userId);

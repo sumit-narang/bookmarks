@@ -51,7 +51,8 @@ export interface BackendServerOptions {
 }
 
 export interface BackendServer {
-  start(): Promise<void>;
+  /** Start listening. Returns the actual bound port (useful when port 0 is requested). */
+  start(): Promise<{ port: number }>;
   stop(): Promise<void>;
 }
 
@@ -1360,10 +1361,23 @@ export const createBackendServer = async (options: BackendServerOptions): Promis
   });
 
   return {
-    async start() {
-      await new Promise<void>((resolvePromise) => {
+    /**
+     * Start listening. Returns the actual bound port, which may differ
+     * from options.port when port 0 is used (OS-assigned ephemeral port).
+     */
+    async start(): Promise<{ port: number }> {
+      return new Promise((resolvePromise, rejectPromise) => {
+        const onError = (error: Error) => {
+          rejectPromise(error);
+        };
+
+        server.once('error', onError);
+
         server.listen(options.port, options.host, () => {
-          resolvePromise();
+          server.removeListener('error', onError);
+          const address = server.address();
+          const boundPort = (address && typeof address === 'object') ? address.port : options.port;
+          resolvePromise({ port: boundPort });
         });
       });
     },

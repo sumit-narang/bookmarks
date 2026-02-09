@@ -4,6 +4,7 @@
 
 import { nowIso } from '../../core/src';
 import type { DatabaseAdapter } from '../../db/src';
+import { countPendingMutations } from '../../sync/src';
 import {
   comparePreferenceVersions,
   getOrCreatePreferences,
@@ -30,6 +31,7 @@ export interface PushPreferenceOutboxOptions {
   userId: string;
   remote: PreferenceSyncRemote;
   limit?: number;
+  maxAttempts?: number;
 }
 
 export interface PullPreferenceUpdatesOptions {
@@ -47,7 +49,9 @@ export interface SyncPreferencesOptions {
 
 export interface PushPreferenceOutboxResult {
   pendingCount: number;
+  eligibleCount: number;
   pushedCount: number;
+  skippedDeadLetterCount: number;
 }
 
 export interface PullPreferenceUpdatesResult {
@@ -61,6 +65,8 @@ export interface SyncPreferencesResult {
   pull: PullPreferenceUpdatesResult;
 }
 
+const DEFAULT_MAX_ATTEMPTS = 5;
+
 /**
  * Push pending local preference mutations to remote backend.
  * @param options
@@ -69,16 +75,28 @@ export interface SyncPreferencesResult {
 export const pushPreferenceOutbox = async (
   options: PushPreferenceOutboxOptions
 ): Promise<PushPreferenceOutboxResult> => {
-  const pending = await listPendingPreferenceMutations(options.database, options.userId, options.limit ?? 50);
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  const batchLimit = options.limit ?? 50;
 
-  if (pending.length === 0) {
+  // Count all pending rows (unlimited) and eligible rows (unlimited) for accurate
+  // reporting, then fetch the batch-limited eligible rows for actual push.
+  // skippedDeadLetterCount uses unlimited counts so it is correct even when
+  // eligible rows exceed batchLimit.
+  const totalPending = await countPendingMutations(options.database, options.userId, 'preferences');
+  const totalEligible = await countPendingMutations(options.database, options.userId, 'preferences', maxAttempts);
+  const eligibleMutations = await listPendingPreferenceMutations(options.database, options.userId, batchLimit, maxAttempts);
+  const deadLetterCount = totalPending - totalEligible;
+
+  if (eligibleMutations.length === 0) {
     return {
-      pendingCount: 0,
+      pendingCount: totalPending,
+      eligibleCount: 0,
       pushedCount: 0,
+      skippedDeadLetterCount: deadLetterCount,
     };
   }
 
-  const operations: PreferenceSyncOperation[] = pending.map((mutation) => {
+  const operations: PreferenceSyncOperation[] = eligibleMutations.map((mutation) => {
     return {
       userId: mutation.userId,
       operationId: mutation.operationId,
@@ -94,7 +112,7 @@ export const pushPreferenceOutbox = async (
 
     let pushedCount = 0;
 
-    for (const mutation of pending) {
+    for (const mutation of eligibleMutations) {
       if (marksAllApplied || appliedSet.has(mutation.operationId)) {
         await markPreferenceMutationProcessed(options.database, mutation.outboxId);
         pushedCount += 1;
@@ -109,13 +127,15 @@ export const pushPreferenceOutbox = async (
     });
 
     return {
-      pendingCount: pending.length,
+      pendingCount: totalPending,
+      eligibleCount: totalEligible,
       pushedCount,
+      skippedDeadLetterCount: deadLetterCount,
     };
   } catch (error) {
     const message = (error as Error).message;
 
-    for (const mutation of pending) {
+    for (const mutation of eligibleMutations) {
       await markPreferenceMutationFailed(options.database, mutation.outboxId, message);
     }
 

@@ -77,21 +77,58 @@ export const createOutboxEntry = async (
 };
 
 /**
- * List pending outbox entries for a user and entity type.
+ * Count all pending outbox entries for a specific user and entity type.
+ * Unlike listPendingMutations, this is not limited and returns an accurate total.
+ * When maxAttempts is provided, only rows with attempts < maxAttempts are counted.
+ * @param database
+ * @param userId
+ * @param entityType
+ * @param maxAttempts - optional ceiling; rows with attempts >= this are excluded
+ * @returns {Promise<number>}
+ */
+export const countPendingMutations = async (
+  database: DatabaseAdapter,
+  userId: string,
+  entityType: string,
+  maxAttempts?: number
+): Promise<number> => {
+  const hasAttemptsFilter = maxAttempts !== undefined;
+  const sql = `SELECT COUNT(*) as count FROM outbox
+     WHERE user_id = ?
+       AND entity_type = ?
+       AND processed_at IS NULL
+       ${hasAttemptsFilter ? 'AND attempts < ?' : ''};`;
+
+  const params: (string | number)[] = hasAttemptsFilter
+    ? [userId, entityType, maxAttempts!]
+    : [userId, entityType];
+
+  const row = await database.get<{ count: number }>(sql, params);
+
+  return row?.count ?? 0;
+};
+
+/**
+ * Read pending outbox entries for a specific user and entity type.
+ * When maxAttempts is provided, only rows with attempts < maxAttempts are
+ * returned so dead-lettered rows cannot starve newer eligible mutations
+ * beyond the batch limit.
  * @param database
  * @param userId
  * @param entityType
  * @param limit
+ * @param maxAttempts - optional ceiling; rows with attempts >= this are excluded
  * @returns {Promise<PendingSyncMutation[]>}
  */
 export const listPendingMutations = async (
   database: DatabaseAdapter,
   userId: string,
   entityType: string,
-  limit = 50
+  limit = 50,
+  maxAttempts?: number
 ): Promise<PendingSyncMutation[]> => {
-  const rows = await database.all<OutboxRow>(
-    `SELECT
+  const hasAttemptsFilter = maxAttempts !== undefined;
+  const sql = `SELECT
        id,
        user_id,
        operation_type,
@@ -108,10 +145,15 @@ export const listPendingMutations = async (
      WHERE user_id = ?
        AND entity_type = ?
        AND processed_at IS NULL
+       ${hasAttemptsFilter ? 'AND attempts < ?' : ''}
      ORDER BY created_at ASC
-     LIMIT ?;`,
-    [userId, entityType, limit]
-  );
+     LIMIT ?;`;
+
+  const params: (string | number)[] = hasAttemptsFilter
+    ? [userId, entityType, maxAttempts!, limit]
+    : [userId, entityType, limit];
+
+  const rows = await database.all<OutboxRow>(sql, params);
 
   const mutations: PendingSyncMutation[] = [];
 

@@ -399,9 +399,10 @@ export const applyPreferenceSyncOperation = async (
 export const listPendingPreferenceMutations = async (
   database: DatabaseAdapter,
   userId: string,
-  limit = 50
+  limit = 50,
+  maxAttempts?: number
 ): Promise<PreferenceOutboxMutation[]> => {
-  const pendingMutations = await listPendingMutations(database, userId, PREFERENCES_ENTITY_TYPE, limit);
+  const pendingMutations = await listPendingMutations(database, userId, PREFERENCES_ENTITY_TYPE, limit, maxAttempts);
   const rows: PendingOutboxRow[] = pendingMutations.map((mutation) => {
     return {
       outboxId: mutation.outboxId,

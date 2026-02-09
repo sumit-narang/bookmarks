@@ -4,6 +4,7 @@
 
 import { nowIso } from '../../core/src';
 import {
+  countPendingMutations,
   getSyncState,
   listPendingMutations,
   markMutationFailed,
@@ -97,15 +98,22 @@ const extractMutationUpdatedAt = (payload: unknown, outboxId: string): string =>
 export const pushOutbox = async (options: PushOutboxOptions): Promise<PushOutboxResult> => {
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const batchLimit = options.batchLimit ?? DEFAULT_BATCH_LIMIT;
-  const pending = await listPendingMutations(options.database, options.userId, options.entityType, batchLimit);
-  const eligibleMutations = pending.filter((mutation) => mutation.attempts < maxAttempts);
+
+  // Count all pending rows (unlimited) and eligible rows (unlimited) for accurate
+  // reporting, then fetch the batch-limited eligible rows for actual push.
+  // skippedDeadLetterCount uses unlimited counts so it is correct even when
+  // eligible rows exceed batchLimit.
+  const totalPending = await countPendingMutations(options.database, options.userId, options.entityType);
+  const totalEligible = await countPendingMutations(options.database, options.userId, options.entityType, maxAttempts);
+  const eligibleMutations = await listPendingMutations(options.database, options.userId, options.entityType, batchLimit, maxAttempts);
+  const deadLetterCount = totalPending - totalEligible;
 
   if (eligibleMutations.length === 0) {
     return {
-      pendingCount: pending.length,
+      pendingCount: totalPending,
       eligibleCount: 0,
       pushedCount: 0,
-      skippedDeadLetterCount: pending.length,
+      skippedDeadLetterCount: deadLetterCount,
     };
   }
 
@@ -142,10 +150,10 @@ export const pushOutbox = async (options: PushOutboxOptions): Promise<PushOutbox
     });
 
     return {
-      pendingCount: pending.length,
-      eligibleCount: eligibleMutations.length,
+      pendingCount: totalPending,
+      eligibleCount: totalEligible,
       pushedCount,
-      skippedDeadLetterCount: pending.length - eligibleMutations.length,
+      skippedDeadLetterCount: deadLetterCount,
     };
   } catch (error) {
     const message = (error as Error).message;
