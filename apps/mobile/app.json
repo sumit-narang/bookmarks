@@ -38,7 +38,8 @@
     },
     "plugins": [
       "expo-web-browser",
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      "expo-sqlite"
     ],
     "extra": {
       "eas": {

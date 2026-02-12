@@ -87,7 +87,7 @@ const CollectionScreen = ({ navigation }) => {
     // Load collections for each saved place
     const collectionsMap = {};
     for (const place of saved) {
-      const placeId = place.placeId || place.id;
+      const placeId = place.id;
       const placeColls = await getCollectionsForPlace(placeId);
       collectionsMap[placeId] = placeColls;
     }
@@ -103,10 +103,7 @@ const CollectionScreen = ({ navigation }) => {
   // Handle tapping on a place card
   const handlePlacePress = (place) => {
     mediumHaptic();
-    navigation.navigate('PlaceDetails', {
-      placeId: place.placeId || place.id,
-      googlePlace: place.isGooglePlace ? place : null,
-    });
+    navigation.navigate('PlaceDetails', { placeId: place.id });
   };
 
   // Handle share button
@@ -265,7 +262,7 @@ const CollectionScreen = ({ navigation }) => {
                           const isLast = index === arr.length - 1;
                           return (
                             <TouchableOpacity
-                              key={`${collection.id}-${place.id || place.placeId}`}
+                              key={`${collection.id}-${place.id}`}
                               style={[
                                 styles.placeContainer,
                                 isFirst && styles.placeContainerFirst,
@@ -335,7 +332,7 @@ const CollectionScreen = ({ navigation }) => {
           <View style={styles.allPlacesContainer}>
             {allSavedPlaces.map((place) => (
               <TouchableOpacity
-                key={place.id || place.placeId}
+                key={place.id}
                 style={styles.placeListItem}
                 onPress={() => handlePlacePress(place)}
                 activeOpacity={0.7}
@@ -352,11 +349,11 @@ const CollectionScreen = ({ navigation }) => {
                   <Text style={styles.placeListType} numberOfLines={1}>
                     {place.type}
                   </Text>
-                  {placeCollections[place.placeId || place.id]?.length > 0 && (
+                  {placeCollections[place.id]?.length > 0 && (
                     <View style={styles.placeListCollections}>
                       <BookmarkIcon width={12} height={12} />
                       <Text style={styles.placeListCollectionsText} numberOfLines={1}>
-                        {formatCollectionsText(placeCollections[place.placeId || place.id])}
+                        {formatCollectionsText(placeCollections[place.id])}
                       </Text>
                     </View>
                   )}

@@ -71,7 +71,7 @@ const ShareCollectionModal = ({ navigation }) => {
           id: collection.id,
           name: collection.name,
           places: places.map((place) => ({
-            id: place.id || place.placeId,
+            id: place.placeId || place.id,
             name: place.name,
             type: place.type,
             image: place.image,

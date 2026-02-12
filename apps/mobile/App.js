@@ -61,7 +61,7 @@ const linking = {
 export default function App() {
   const [isReady, setIsReady] = useState(false);
 
-  // Initialize storage with mock data on first launch
+  // Initialize SQLite persistence and run migrations
   useEffect(() => {
     const prepare = async () => {
       try {

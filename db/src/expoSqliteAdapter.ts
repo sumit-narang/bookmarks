@@ -9,9 +9,9 @@ import type { DatabaseAdapter, RunResult, SqliteValue } from './types';
 
 export interface ExpoDatabaseClient {
   execAsync(sql: string): Promise<void>;
-  runAsync(sql: string, ...params: SqliteValue[]): Promise<{ changes: number; lastInsertRowId?: number; lastInsertRowid?: number }>;
-  getFirstAsync<T>(sql: string, ...params: SqliteValue[]): Promise<T | null>;
-  getAllAsync<T>(sql: string, ...params: SqliteValue[]): Promise<T[]>;
+  runAsync(sql: string, params: SqliteValue[]): Promise<{ changes: number; lastInsertRowId?: number; lastInsertRowid?: number }>;
+  getFirstAsync<T>(sql: string, params: SqliteValue[]): Promise<T | null>;
+  getAllAsync<T>(sql: string, params: SqliteValue[]): Promise<T[]>;
   closeAsync?(): Promise<void>;
 }
 
@@ -28,7 +28,7 @@ export class ExpoSqliteAdapter implements DatabaseAdapter {
   }
 
   async run(sql: string, params: readonly SqliteValue[] = []): Promise<RunResult> {
-    const result = await this.database.runAsync(sql, ...params);
+    const result = await this.database.runAsync(sql, [...params]);
 
     return {
       changes: Number(result.changes),
@@ -37,11 +37,11 @@ export class ExpoSqliteAdapter implements DatabaseAdapter {
   }
 
   async get<T>(sql: string, params: readonly SqliteValue[] = []): Promise<T | null> {
-    return this.database.getFirstAsync<T>(sql, ...params);
+    return this.database.getFirstAsync<T>(sql, [...params]);
   }
 
   async all<T>(sql: string, params: readonly SqliteValue[] = []): Promise<T[]> {
-    return this.database.getAllAsync<T>(sql, ...params);
+    return this.database.getAllAsync<T>(sql, [...params]);
   }
 
   async transaction<T>(callback: (database: DatabaseAdapter) => Promise<T>): Promise<T> {

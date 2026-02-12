@@ -106,16 +106,17 @@ const PlaceDetailsScreen = ({ route, navigation }) => {
 
       if (existingPlace) {
         currentPlace = { ...googlePlace, ...existingPlace, saved: existingPlace.saved };
+        currentPlaceId = existingPlace.id;
       } else {
         currentPlace = googlePlace;
+        currentPlaceId = googlePlace.placeId;
       }
-      currentPlaceId = googlePlace.placeId;
     } else {
       // Otherwise load from local storage
       currentPlace = await getPlaceById(placeId);
       // For local places, use the place's id or placeId
       if (currentPlace) {
-        currentPlaceId = currentPlace.placeId || currentPlace.id;
+        currentPlaceId = currentPlace.id;
       }
     }
 
@@ -154,7 +155,7 @@ const PlaceDetailsScreen = ({ route, navigation }) => {
     mediumHaptic();
     // Pass the place data to the save modal (always include place info for preview)
     navigation.navigate('SaveToCollection', {
-      placeId: place.placeId || place.id,
+      placeId: place.id,
       googlePlace: place,
     });
   };
@@ -174,7 +175,7 @@ const PlaceDetailsScreen = ({ route, navigation }) => {
   const handleEditSavedCollections = () => {
     mediumHaptic();
     navigation.navigate('EditSavedOptions', {
-      placeId: place.placeId || place.id,
+      placeId: place.id,
       googlePlace: place,
     });
   };

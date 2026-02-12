@@ -248,11 +248,11 @@ Status: ✅ Done
 - [x] refactor domain httpClient modules to use shared `/http` helpers
 
 ## Mobile cutover
-Status: Not started
-- [ ] replace legacy `data/storage.js` calls with new modules
-- [ ] wire `expoSqliteAdapter` into mobile app
-- [ ] remove startup data reset behavior
-- [ ] signout triggers local wipe (extend `localPersistence.js` to delete SQLite file)
+Status: ✅ Done
+- [x] replace legacy `data/storage.js` calls with new modules
+- [x] wire `expoSqliteAdapter` into mobile app
+- [x] remove startup data reset behavior
+- [x] signout triggers local wipe (extend `localPersistence.js` to delete SQLite file)
 
 ---
 

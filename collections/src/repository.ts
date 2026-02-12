@@ -757,6 +757,33 @@ export const removePlaceFromCollection = async (
 };
 
 /**
+ * List all non-deleted collections that contain a given place.
+ * @param database
+ * @param userId
+ * @param placeId
+ * @returns {Promise<CollectionRecord[]>}
+ */
+export const listCollectionsForPlace = async (
+  database: DatabaseAdapter,
+  userId: string,
+  placeId: string
+): Promise<CollectionRecord[]> => {
+  const rows = await database.all<CollectionRowWithCount>(
+    `SELECT ${SELECT_COLLECTION_FIELDS}
+     FROM collections c
+     INNER JOIN collection_places cp ON cp.collection_id = c.id
+     WHERE c.user_id = ?
+       AND c.deleted_at IS NULL
+       AND cp.place_id = ?
+       AND cp.deleted_at IS NULL
+     ORDER BY c.created_at DESC;`,
+    [userId, placeId]
+  );
+
+  return rows.map(mapRowToRecord);
+};
+
+/**
  * List all non-deleted places in a collection, ordered by position.
  * Verifies the collection belongs to the user.
  * @param database

@@ -158,8 +158,7 @@ const AddToExistingCollectionModal = ({ route, navigation }) => {
           >
             {collections.map((collection) => {
               const isSelected = selectedIds.has(collection.id);
-              const isAlreadySaved = collection.places?.includes(placeId) ||
-                collection.places?.includes(googlePlace?.placeId);
+              const isAlreadySaved = collection.places?.includes(placeId);
               return (
                 <TouchableOpacity
                   key={collection.id}

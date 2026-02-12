@@ -37,7 +37,7 @@ const PlaceOptionsModal = ({ route, navigation }) => {
         id: 'shared-place',
         name: 'Shared Place',
         places: [{
-          id: place.id || place.placeId,
+          id: place.placeId || place.id,
           name: place.name,
           type: place.type,
           image: place.image,
@@ -88,8 +88,7 @@ const PlaceOptionsModal = ({ route, navigation }) => {
           style: 'destructive',
           onPress: async () => {
             heavyHaptic();
-            const placeId = place.placeId || place.id;
-            const success = await deletePlace(placeId);
+            const success = await deletePlace(place.id);
             if (success) {
               navigation.goBack();
             } else {
