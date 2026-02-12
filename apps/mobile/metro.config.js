@@ -1,8 +1,15 @@
+const path = require('path');
 const { getDefaultConfig } = require('expo/metro-config');
 
-const config = getDefaultConfig(__dirname);
+const projectRoot = __dirname;
+const workspaceRoot = path.resolve(projectRoot, '../..');
+const shareRoot = path.resolve(workspaceRoot, 'share');
 
-const { transformer, resolver } = config;
+const config = getDefaultConfig(projectRoot);
+
+const { transformer, resolver, watchFolders } = config;
+
+config.watchFolders = [...new Set([...(watchFolders || []), shareRoot])];
 
 config.transformer = {
   ...transformer,

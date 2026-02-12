@@ -16,6 +16,7 @@ import {
   Dimensions,
 } from 'react-native';
 import * as Linking from 'expo-linking';
+import { encodeSharePayload } from '../../../share/src';
 import { getCollections, getPlacesInCollection } from '../data/storage';
 import CrossIcon from '../assets/icons/modal-cross-icon.svg';
 import SelectedIcon from '../assets/icons/selected-selection.svg';
@@ -83,8 +84,7 @@ const ShareCollectionModal = ({ navigation }) => {
     );
 
     // Encode as base64
-    const jsonData = JSON.stringify(shareData);
-    const base64Data = btoa(encodeURIComponent(jsonData));
+    const base64Data = encodeSharePayload(shareData);
 
     // Create URL using Expo Linking (works for both mobile and web)
     const shareUrl = Linking.createURL('shared', {

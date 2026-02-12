@@ -12,6 +12,7 @@ import {
   Share,
 } from 'react-native';
 import * as Linking from 'expo-linking';
+import { encodeSharePayload } from '../../../share/src';
 import CrossIcon from '../assets/icons/modal-cross-icon.svg';
 import ShareIcon from '../assets/icons/share.svg';
 import DeleteIcon from '../assets/icons/delete.svg';
@@ -47,8 +48,7 @@ const PlaceOptionsModal = ({ route, navigation }) => {
       }];
 
       // Encode as base64
-      const jsonData = JSON.stringify(shareData);
-      const base64Data = btoa(encodeURIComponent(jsonData));
+      const base64Data = encodeSharePayload(shareData);
 
       // Create URL using Expo Linking
       const shareUrl = Linking.createURL('shared', {

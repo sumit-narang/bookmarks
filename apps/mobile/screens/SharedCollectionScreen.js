@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { decodeSharePayload } from '../../../share/src';
 import { colors } from '../styles/colors';
 import { typography } from '../styles/typography';
 
@@ -39,8 +40,7 @@ const SharedCollectionScreen = ({ route, navigation }) => {
       }
 
       // Decode base64 data
-      const jsonData = decodeURIComponent(atob(data));
-      const parsed = JSON.parse(jsonData);
+      const parsed = decodeSharePayload(data);
       setSharedData(parsed);
     } catch (err) {
       console.error('Error parsing shared data:', err);

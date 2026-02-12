@@ -1,8 +1,8 @@
 # Persistence Architecture Plan
 
 ## Status
-- **Date:** 2026-02-06
-- **State:** Approved planning draft (no implementation yet)
+- **Date:** 2026-02-12
+- **State:** Core persistence implemented; mobile cutover pending
 
 ---
 
@@ -82,8 +82,9 @@ Build a modular, offline-first persistence system with:
 - transaction helpers
 
 ## `/http`
-- typed API client and transport utilities
-- auth header/token handling
+- shared HTTP transport utilities (URL normalization, response parsing, error handling)
+- common `HttpClientOptions` type and `createSyncRemoteClient` factory
+- auth header/token handling (planned)
 
 ## `/auth`
 - auth persistence contracts
@@ -193,7 +194,7 @@ No mock remote API for core confidence.
 
 ---
 
-## 8) Delivery roadmap (vertical slices)
+## 8) Delivery roadmap
 
 ## Foundation
 Status: ✅ Done
@@ -202,50 +203,70 @@ Status: ✅ Done
 - [x] establish `/apps/backend` and `/apps/cli`
 - [x] create `/schema` and `/db` foundations
 
-## Slice 1: Preferences (first end-to-end)
+## Preferences (first end-to-end)
 Status: ✅ Done
 - [x] implement `/preferences` with local + remote + sync
 - [x] wire Hexagon screen to new module
 - [x] add CLI commands for preferences
 - [x] integration tests pass
 
-## Slice 2: Places
+## Places
 Status: ✅ Done
 - [x] implement place upsert/fetch/delete (UUID + external Google ID)
 - [x] ensure saved status is derived
 - [x] integration tests + CLI
 
-## Slice 3: Collections
-- collection CRUD + ordered membership
-- keep empty collections
-- derived place counts only
-- integration tests + CLI
+## Collections
+Status: ✅ Done
+- [x] collection CRUD + ordered membership
+- [x] keep empty collections
+- [x] derived place counts only
+- [x] cascading soft-delete (collection delete cascades to memberships)
+- [x] 6 sync operation types (create, update, delete, add-place, remove-place, upsert)
+- [x] full membership reconciliation during pull
+- [x] integration tests (18 persistence + 4 sync) + CLI + backend routes
 
-## Slice 4: Sync hardening
-- full outbox flow, retries, checkpoints
-- LWW conflict tests
+## Sync hardening
+Status: ✅ Done
+- [x] shared entity-agnostic sync engine (push/pull/run)
+- [x] full outbox flow, retries, checkpoints
+- [x] dead-letter skip with starvation prevention
+- [x] batch-limited push with cursor progression
+- [x] LWW conflict tests (8 cases)
+- [x] stress tests (120+ entities, 10-cycle convergence)
+- [x] CLI sync commands (sync:push, sync:pull, sync:run for all entity types)
 
-## Slice 5: Share
-- keep current payload URL model in `/share`
-- move encoding/decoding to shared module
+## Share
+Status: ✅ Done
+- [x] keep current payload URL model in `/share`
+- [x] move encoding/decoding to shared module
+- [x] mobile-format compatibility tests (10 cases)
 
-## Slice 6: Mobile cutover
-- replace legacy `data/storage.js` calls with new modules
-- remove startup data reset behavior
-- signout triggers local wipe
+## HTTP consolidation
+Status: ✅ Done
+- [x] extract shared transport utilities (trimTrailingSlash, readJsonResponse) into `/http`
+- [x] refactor domain httpClient modules to use shared `/http` helpers
+
+## Mobile cutover
+Status: Not started
+- [ ] replace legacy `data/storage.js` calls with new modules
+- [ ] wire `expoSqliteAdapter` into mobile app
+- [ ] remove startup data reset behavior
+- [ ] signout triggers local wipe (extend `localPersistence.js` to delete SQLite file)
 
 ---
 
 ## 9) CLI scope
 
-Planned commands:
+Implemented commands:
 - `db:init`, `db:reset`, `db:inspect`
-- `preferences:get`, `preferences:set`
+- `preferences:get`, `preferences:set`, `preferences:sync`
 - `places:list`, `places:upsert-google`, `places:remove`
-- `collections:create`, `collections:list`, `collections:add-place`, `collections:remove-place`
-- `sync:push`, `sync:pull`, `sync:run`
+- `collections:create`, `collections:list`, `collections:get`, `collections:update`, `collections:remove`
+- `collections:add-place`, `collections:remove-place`, `collections:list-places`
+- `sync:push`, `sync:pull`, `sync:run` (all entity types)
 
-CLI must call the same use-cases/repositories used by mobile.
+CLI calls the same use-cases/repositories used by mobile.
 
 ---
 
@@ -255,6 +276,10 @@ CLI must call the same use-cases/repositories used by mobile.
 - [x] Define schema migration `v1` and DB adapters.
 - [x] Implement preferences end-to-end with integration tests.
 - [x] Proceed to Places and Collections work.
+- [x] Consolidate HTTP transport utilities into `/http` module.
+- [ ] Implement `/auth` module (auth persistence contracts, token handling, session lifecycle).
+- [ ] Add auth middleware to backend (currently unauthenticated; userId is a path param).
+- [ ] Mobile cutover: wire new persistence modules into the Expo app.
 
 ---
 

@@ -2,6 +2,8 @@
  * HTTP client for preference routes served by the backend app.
  */
 
+import type { HttpClientOptions } from '../../http/src';
+import { buildPullQuery, readJsonResponse, trimTrailingSlash } from '../../http/src';
 import type {
   HexagonPreferences,
   HexagonPreferencesPatch,
@@ -21,23 +23,7 @@ export interface PreferencesHttpClient {
   pullPreferences(userId: string, cursor: string | null): Promise<PreferenceSyncPullResponse>;
 }
 
-export interface PreferencesHttpClientOptions {
-  baseUrl: string;
-  fetchImpl?: typeof fetch;
-}
-
-const trimTrailingSlash = (value: string): string => {
-  return value.endsWith('/') ? value.slice(0, -1) : value;
-};
-
-const readJsonResponse = async <TPayload>(response: Response): Promise<TPayload> => {
-  if (!response.ok) {
-    const payload = await response.text();
-    throw new Error(`HTTP ${response.status}: ${payload || response.statusText}`);
-  }
-
-  return (await response.json()) as TPayload;
-};
+export type PreferencesHttpClientOptions = HttpClientOptions;
 
 /**
  * Create a backend HTTP client for preference routes.
@@ -85,12 +71,7 @@ export const createPreferencesHttpClient = (options: PreferencesHttpClientOption
       return readJsonResponse<PreferenceSyncPushResponse>(response);
     },
     async pullPreferences(userId, cursor) {
-      const query = new URLSearchParams({ userId });
-
-      if (cursor) {
-        query.set('cursor', cursor);
-      }
-
+      const query = buildPullQuery(userId, cursor);
       const response = await fetchImpl(`${baseUrl}/sync/preferences/pull?${query.toString()}`);
       return readJsonResponse<PreferenceSyncPullResponse>(response);
     },
