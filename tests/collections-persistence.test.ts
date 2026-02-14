@@ -30,6 +30,7 @@ import { createNodeSqliteAdapter, migrateDatabase } from '../db/src';
 import type { DatabaseAdapter } from '../db/src';
 import { getPlace, listPlaces, upsertPlace } from '../places/src';
 import { schemaMigrations } from '../schema/src';
+import { createTestAuthSession } from './helpers/auth';
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(currentDirectory, '..');
@@ -644,12 +645,15 @@ test('backend collection routes: create, list, get, update, delete', { timeout: 
       port,
       databasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
+      authSession = await createTestAuthSession(baseUrl, 'user-http');
+
       // Create a collection
-      const createResponse = await fetch(`${baseUrl}/users/user-http/collections`, {
+      const createResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'HTTP Favorites', coverImage: 'https://example.com/cover.jpg' }),
@@ -665,7 +669,7 @@ test('backend collection routes: create, list, get, update, delete', { timeout: 
       const collectionId = createPayload.collection.id;
 
       // List collections
-      const listResponse = await fetch(`${baseUrl}/users/user-http/collections`);
+      const listResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections`);
       assert.equal(listResponse.status, 200);
 
       const listPayload = (await listResponse.json()) as { collections: Array<{ id: string }> };
@@ -673,7 +677,7 @@ test('backend collection routes: create, list, get, update, delete', { timeout: 
       assert.equal(listPayload.collections[0]?.id, collectionId);
 
       // Get single collection
-      const getResponse = await fetch(`${baseUrl}/users/user-http/collections/${collectionId}`);
+      const getResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections/${collectionId}`);
       assert.equal(getResponse.status, 200);
 
       const getPayload = (await getResponse.json()) as { collection: { id: string; name: string } };
@@ -681,7 +685,7 @@ test('backend collection routes: create, list, get, update, delete', { timeout: 
       assert.equal(getPayload.collection.name, 'HTTP Favorites');
 
       // Update collection
-      const updateResponse = await fetch(`${baseUrl}/users/user-http/collections/${collectionId}`, {
+      const updateResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections/${collectionId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'HTTP Favorites Updated' }),
@@ -693,7 +697,7 @@ test('backend collection routes: create, list, get, update, delete', { timeout: 
       assert.equal(updatePayload.collection.name, 'HTTP Favorites Updated');
 
       // Delete collection
-      const deleteResponse = await fetch(`${baseUrl}/users/user-http/collections/${collectionId}`, {
+      const deleteResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections/${collectionId}`, {
         method: 'DELETE',
       });
 
@@ -703,14 +707,18 @@ test('backend collection routes: create, list, get, update, delete', { timeout: 
       assert.equal(deletePayload.removed, true);
 
       // Collection no longer listed
-      const listAfterDelete = await fetch(`${baseUrl}/users/user-http/collections`);
+      const listAfterDelete = await authSession.fetch(`${baseUrl}/users/user-http/collections`);
       const listAfterDeletePayload = (await listAfterDelete.json()) as { collections: Array<{ id: string }> };
       assert.equal(listAfterDeletePayload.collections.length, 0);
 
       // Get returns 404
-      const getAfterDelete = await fetch(`${baseUrl}/users/user-http/collections/${collectionId}`);
+      const getAfterDelete = await authSession.fetch(`${baseUrl}/users/user-http/collections/${collectionId}`);
       assert.equal(getAfterDelete.status, 404);
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });
@@ -727,12 +735,15 @@ test('backend collection membership routes: add-place, list-places, remove-place
       port,
       databasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
+      authSession = await createTestAuthSession(baseUrl, 'user-http');
+
       // Create a collection
-      const createColResponse = await fetch(`${baseUrl}/users/user-http/collections`, {
+      const createColResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'Membership Test' }),
@@ -742,7 +753,7 @@ test('backend collection membership routes: add-place, list-places, remove-place
       const collectionId = createColPayload.collection.id;
 
       // Create a place
-      const upsertResponse = await fetch(`${baseUrl}/users/user-http/places/upsert-google`, {
+      const upsertResponse = await authSession.fetch(`${baseUrl}/users/user-http/places/upsert-google`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -758,7 +769,7 @@ test('backend collection membership routes: add-place, list-places, remove-place
       assert.equal(upsertPayload.place.isSaved, false);
 
       // Add place to collection
-      const addResponse = await fetch(`${baseUrl}/users/user-http/collections/${collectionId}/places`, {
+      const addResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections/${collectionId}/places`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placeId }),
@@ -770,7 +781,7 @@ test('backend collection membership routes: add-place, list-places, remove-place
       assert.equal(addPayload.added, true);
 
       // List places in collection
-      const listPlacesResponse = await fetch(`${baseUrl}/users/user-http/collections/${collectionId}/places`);
+      const listPlacesResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections/${collectionId}/places`);
       assert.equal(listPlacesResponse.status, 200);
 
       const listPlacesPayload = (await listPlacesResponse.json()) as { places: Array<{ id: string; name: string; isSaved: boolean }> };
@@ -779,17 +790,17 @@ test('backend collection membership routes: add-place, list-places, remove-place
       assert.equal(listPlacesPayload.places[0]?.isSaved, true);
 
       // Verify isSaved on the place directly
-      const getPlaceResponse = await fetch(`${baseUrl}/users/user-http/places/${placeId}`);
+      const getPlaceResponse = await authSession.fetch(`${baseUrl}/users/user-http/places/${placeId}`);
       const getPlacePayload = (await getPlaceResponse.json()) as { place: { isSaved: boolean } };
       assert.equal(getPlacePayload.place.isSaved, true);
 
       // Verify collection placeCount
-      const getColResponse = await fetch(`${baseUrl}/users/user-http/collections/${collectionId}`);
+      const getColResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections/${collectionId}`);
       const getColPayload = (await getColResponse.json()) as { collection: { placeCount: number } };
       assert.equal(getColPayload.collection.placeCount, 1);
 
       // Remove place from collection
-      const removeResponse = await fetch(`${baseUrl}/users/user-http/collections/${collectionId}/places/${placeId}`, {
+      const removeResponse = await authSession.fetch(`${baseUrl}/users/user-http/collections/${collectionId}/places/${placeId}`, {
         method: 'DELETE',
       });
 
@@ -799,15 +810,19 @@ test('backend collection membership routes: add-place, list-places, remove-place
       assert.equal(removePayload.removed, true);
 
       // List places in collection is now empty
-      const listAfterRemove = await fetch(`${baseUrl}/users/user-http/collections/${collectionId}/places`);
+      const listAfterRemove = await authSession.fetch(`${baseUrl}/users/user-http/collections/${collectionId}/places`);
       const listAfterRemovePayload = (await listAfterRemove.json()) as { places: Array<{ id: string }> };
       assert.equal(listAfterRemovePayload.places.length, 0);
 
       // isSaved on place is now false
-      const getPlaceAfter = await fetch(`${baseUrl}/users/user-http/places/${placeId}`);
+      const getPlaceAfter = await authSession.fetch(`${baseUrl}/users/user-http/places/${placeId}`);
       const getPlaceAfterPayload = (await getPlaceAfter.json()) as { place: { isSaved: boolean } };
       assert.equal(getPlaceAfterPayload.place.isSaved, false);
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });
@@ -824,11 +839,14 @@ test('backend returns 400 for invalid collection input', { timeout: 20_000 }, as
       port,
       databasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
-      const response = await fetch(`${baseUrl}/users/user-val/collections`, {
+      authSession = await createTestAuthSession(baseUrl, 'user-val');
+
+      const response = await authSession.fetch(`${baseUrl}/users/user-val/collections`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notName: 'bad' }),
@@ -839,6 +857,10 @@ test('backend returns 400 for invalid collection input', { timeout: 20_000 }, as
       const payload = (await response.json()) as { error: string };
       assert.ok(payload.error);
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });

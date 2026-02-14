@@ -14,7 +14,7 @@
     "backend:start": "npm --workspace @bookmarks/backend run start",
     "cli": "npm --workspace @bookmarks/cli run cli --",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/**/*.test.ts"
+    "test": "NODE_ENV=test BOOKMARKS_AUTH_TOKEN_SECRET=bookmarks-test-auth-secret node --import tsx --test tests/**/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

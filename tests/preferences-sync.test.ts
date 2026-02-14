@@ -19,6 +19,7 @@ import {
   syncPreferences,
 } from '../preferences/src';
 import { schemaMigrations } from '../schema/src';
+import { createTestAuthSession } from './helpers/auth';
 
 const getAvailablePort = async (): Promise<number> => {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -114,6 +115,7 @@ test('syncPreferences pushes local changes and pulls newer remote state', { time
       databasePath: backendDatabasePath,
     });
     let backendStarted = false;
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     try {
       await migrateDatabase(localDatabase, schemaMigrations);
@@ -133,7 +135,8 @@ test('syncPreferences pushes local changes and pulls newer remote state', { time
       await backend.start();
       backendStarted = true;
 
-      const remote = createPreferencesHttpClient({ baseUrl: `http://127.0.0.1:${port}` });
+      authSession = await createTestAuthSession(`http://127.0.0.1:${port}`, 'user-sync');
+      const remote = createPreferencesHttpClient(authSession.httpClientOptions);
 
       const firstSync = await syncPreferences({
         database: localDatabase,
@@ -182,6 +185,10 @@ test('syncPreferences pushes local changes and pulls newer remote state', { time
       assert.equal(localPreferencesAfterPull.hexagonCustomDepth, 32);
       assert.equal(localPreferencesAfterPull.operationId, 'op-remote-sync-2');
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       if (backendStarted) {
         await backend.stop();
       }

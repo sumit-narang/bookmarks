@@ -4,7 +4,9 @@
 
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { createAuthHttpClient } from '../../../auth/src';
 import { createNodeSqliteAdapter, listUserTables, migrateDatabase } from '../../../db/src';
+import type { HttpClientOptions } from '../../../http/src';
 import {
   createPlacesHttpClient,
   listPlaces,
@@ -43,6 +45,8 @@ interface ParsedArgs {
   databasePath: string;
   userId: string;
   remoteUrl: string;
+  accessToken: string | undefined;
+  refreshToken: string | undefined;
   maxAttempts: number | undefined;
   batchLimit: number | undefined;
   theme: string | undefined;
@@ -106,6 +110,8 @@ const parseArguments = (argv: string[]): ParsedArgs => {
   let databasePath = defaultDatabasePath;
   let userId = defaultUserId;
   let remoteUrl = defaultRemoteUrl;
+  let accessToken = process.env.BOOKMARKS_AUTH_ACCESS_TOKEN;
+  let refreshToken = process.env.BOOKMARKS_AUTH_REFRESH_TOKEN;
   let maxAttempts: number | undefined;
   let batchLimit: number | undefined;
   let theme: string | undefined;
@@ -148,6 +154,16 @@ const parseArguments = (argv: string[]): ParsedArgs => {
       }
       case '--remote-url': {
         remoteUrl = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--access-token': {
+        accessToken = parseRequiredValue(argv, index, current);
+        index += 1;
+        break;
+      }
+      case '--refresh-token': {
+        refreshToken = parseRequiredValue(argv, index, current);
         index += 1;
         break;
       }
@@ -273,6 +289,8 @@ const parseArguments = (argv: string[]): ParsedArgs => {
     databasePath,
     userId,
     remoteUrl,
+    accessToken,
+    refreshToken,
     maxAttempts,
     batchLimit,
     theme,
@@ -298,6 +316,53 @@ const parseArguments = (argv: string[]): ParsedArgs => {
 
 const ensureParentDirectory = (databasePath: string): void => {
   mkdirSync(dirname(databasePath), { recursive: true });
+};
+
+interface RemoteAuthContext {
+  httpClientOptions: HttpClientOptions;
+  revoke(): Promise<void>;
+}
+
+const createRemoteAuthContext = async (
+  remoteUrl: string,
+  credentials: Pick<ParsedArgs, 'accessToken' | 'refreshToken'>
+): Promise<RemoteAuthContext> => {
+  if (!credentials.accessToken || !credentials.refreshToken) {
+    throw new Error(
+      'Missing remote auth credentials. Pass --access-token and --refresh-token, or set '
+      + 'BOOKMARKS_AUTH_ACCESS_TOKEN and BOOKMARKS_AUTH_REFRESH_TOKEN.'
+    );
+  }
+
+  const authClient = createAuthHttpClient({ baseUrl: remoteUrl });
+  let accessToken: string | null = credentials.accessToken;
+  let refreshToken: string | null = credentials.refreshToken;
+
+  return {
+    httpClientOptions: {
+      baseUrl: remoteUrl,
+      auth: {
+        getAccessToken: async () => accessToken,
+        onUnauthorized: async () => {
+          if (!refreshToken) {
+            return false;
+          }
+
+          try {
+            const refreshResponse = await authClient.refreshSession({ refreshToken });
+            accessToken = refreshResponse.session.tokens.accessToken;
+            refreshToken = refreshResponse.session.tokens.refreshToken;
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      },
+    },
+    async revoke() {
+      // Session lifecycle is owned by the caller-provided credentials.
+    },
+  };
 };
 
 const runDbInit = async (databasePath: string): Promise<void> => {
@@ -415,18 +480,25 @@ const runPreferencesSet = async (databasePath: string, args: ParsedArgs): Promis
   }
 };
 
-const runPreferencesSync = async (databasePath: string, userId: string, remoteUrl: string): Promise<void> => {
+const runPreferencesSync = async (
+  databasePath: string,
+  userId: string,
+  remoteUrl: string,
+  credentials: Pick<ParsedArgs, 'accessToken' | 'refreshToken'>
+): Promise<void> => {
   ensureParentDirectory(databasePath);
   const database = createNodeSqliteAdapter({ filename: databasePath });
+  const remoteAuth = await createRemoteAuthContext(remoteUrl, credentials);
 
   try {
     await migrateDatabase(database, schemaMigrations);
 
-    const remote = createPreferencesHttpClient({ baseUrl: remoteUrl });
+    const remote = createPreferencesHttpClient(remoteAuth.httpClientOptions);
     const result = await syncPreferences({ database, userId, remote });
 
     console.log(JSON.stringify(result, null, 2));
   } finally {
+    await remoteAuth.revoke();
     await database.close();
   }
 };
@@ -434,7 +506,7 @@ const runPreferencesSync = async (databasePath: string, userId: string, remoteUr
 const runSyncPushInternal = async (
   database: ReturnType<typeof createNodeSqliteAdapter>,
   userId: string,
-  remoteUrl: string,
+  remoteHttpOptions: HttpClientOptions,
   maxAttempts?: number,
   batchLimit?: number
 ): Promise<{
@@ -442,9 +514,9 @@ const runSyncPushInternal = async (
   places: Awaited<ReturnType<typeof pushPlaceOutbox>>;
   collections: Awaited<ReturnType<typeof pushCollectionOutbox>>;
 }> => {
-  const preferencesRemote = createPreferencesHttpClient({ baseUrl: remoteUrl });
-  const placesRemote = createPlacesHttpClient({ baseUrl: remoteUrl });
-  const collectionsRemote = createCollectionsHttpClient({ baseUrl: remoteUrl });
+  const preferencesRemote = createPreferencesHttpClient(remoteHttpOptions);
+  const placesRemote = createPlacesHttpClient(remoteHttpOptions);
+  const collectionsRemote = createCollectionsHttpClient(remoteHttpOptions);
 
   const preferences = await pushPreferenceOutbox({
     database,
@@ -480,15 +552,15 @@ const runSyncPushInternal = async (
 const runSyncPullInternal = async (
   database: ReturnType<typeof createNodeSqliteAdapter>,
   userId: string,
-  remoteUrl: string
+  remoteHttpOptions: HttpClientOptions
 ): Promise<{
   preferences: Awaited<ReturnType<typeof pullPreferenceUpdates>>;
   places: Awaited<ReturnType<typeof pullPlaceUpdates>>;
   collections: Awaited<ReturnType<typeof pullCollectionUpdates>>;
 }> => {
-  const preferencesRemote = createPreferencesHttpClient({ baseUrl: remoteUrl });
-  const placesRemote = createPlacesHttpClient({ baseUrl: remoteUrl });
-  const collectionsRemote = createCollectionsHttpClient({ baseUrl: remoteUrl });
+  const preferencesRemote = createPreferencesHttpClient(remoteHttpOptions);
+  const placesRemote = createPlacesHttpClient(remoteHttpOptions);
+  const collectionsRemote = createCollectionsHttpClient(remoteHttpOptions);
 
   const preferences = await pullPreferenceUpdates({
     database,
@@ -515,42 +587,67 @@ const runSyncPullInternal = async (
   };
 };
 
-const runSyncPush = async (databasePath: string, userId: string, remoteUrl: string, maxAttempts?: number, batchLimit?: number): Promise<void> => {
+const runSyncPush = async (
+  databasePath: string,
+  userId: string,
+  remoteUrl: string,
+  credentials: Pick<ParsedArgs, 'accessToken' | 'refreshToken'>,
+  maxAttempts?: number,
+  batchLimit?: number
+): Promise<void> => {
   ensureParentDirectory(databasePath);
   const database = createNodeSqliteAdapter({ filename: databasePath });
+  const remoteAuth = await createRemoteAuthContext(remoteUrl, credentials);
 
   try {
     await migrateDatabase(database, schemaMigrations);
-    const result = await runSyncPushInternal(database, userId, remoteUrl, maxAttempts, batchLimit);
+    const result = await runSyncPushInternal(database, userId, remoteAuth.httpClientOptions, maxAttempts, batchLimit);
     console.log(JSON.stringify(result, null, 2));
   } finally {
+    await remoteAuth.revoke();
     await database.close();
   }
 };
 
-const runSyncPull = async (databasePath: string, userId: string, remoteUrl: string): Promise<void> => {
+const runSyncPull = async (
+  databasePath: string,
+  userId: string,
+  remoteUrl: string,
+  credentials: Pick<ParsedArgs, 'accessToken' | 'refreshToken'>
+): Promise<void> => {
   ensureParentDirectory(databasePath);
   const database = createNodeSqliteAdapter({ filename: databasePath });
+  const remoteAuth = await createRemoteAuthContext(remoteUrl, credentials);
 
   try {
     await migrateDatabase(database, schemaMigrations);
-    const result = await runSyncPullInternal(database, userId, remoteUrl);
+    const result = await runSyncPullInternal(database, userId, remoteAuth.httpClientOptions);
     console.log(JSON.stringify(result, null, 2));
   } finally {
+    await remoteAuth.revoke();
     await database.close();
   }
 };
 
-const runSyncRun = async (databasePath: string, userId: string, remoteUrl: string, maxAttempts?: number, batchLimit?: number): Promise<void> => {
+const runSyncRun = async (
+  databasePath: string,
+  userId: string,
+  remoteUrl: string,
+  credentials: Pick<ParsedArgs, 'accessToken' | 'refreshToken'>,
+  maxAttempts?: number,
+  batchLimit?: number
+): Promise<void> => {
   ensureParentDirectory(databasePath);
   const database = createNodeSqliteAdapter({ filename: databasePath });
+  const remoteAuth = await createRemoteAuthContext(remoteUrl, credentials);
 
   try {
     await migrateDatabase(database, schemaMigrations);
-    const push = await runSyncPushInternal(database, userId, remoteUrl, maxAttempts, batchLimit);
-    const pull = await runSyncPullInternal(database, userId, remoteUrl);
+    const push = await runSyncPushInternal(database, userId, remoteAuth.httpClientOptions, maxAttempts, batchLimit);
+    const pull = await runSyncPullInternal(database, userId, remoteAuth.httpClientOptions);
     console.log(JSON.stringify({ push, pull }, null, 2));
   } finally {
+    await remoteAuth.revoke();
     await database.close();
   }
 };
@@ -837,6 +934,8 @@ const printHelp = (): void => {
   console.log('  --db <path>                 Custom SQLite database path');
   console.log(`  --user <id>                 User ID (default: ${defaultUserId})`);
   console.log(`  --remote-url <url>          Backend URL (default: ${defaultRemoteUrl})`);
+  console.log('  --access-token <token>      Backend access token (or BOOKMARKS_AUTH_ACCESS_TOKEN)');
+  console.log('  --refresh-token <token>     Backend refresh token (or BOOKMARKS_AUTH_REFRESH_TOKEN)');
   console.log('  --max-attempts <number>       Max retry attempts before dead-letter (default: 5)');
   console.log('  --batch-limit <number>        Max outbox rows per push batch (default: 50)');
   console.log('  --theme <name>              Hexagon theme');
@@ -879,16 +978,16 @@ const run = async (): Promise<void> => {
       await runPreferencesSet(parsed.databasePath, parsed);
       return;
     case 'preferences:sync':
-      await runPreferencesSync(parsed.databasePath, parsed.userId, parsed.remoteUrl);
+      await runPreferencesSync(parsed.databasePath, parsed.userId, parsed.remoteUrl, parsed);
       return;
     case 'sync:push':
-      await runSyncPush(parsed.databasePath, parsed.userId, parsed.remoteUrl, parsed.maxAttempts, parsed.batchLimit);
+      await runSyncPush(parsed.databasePath, parsed.userId, parsed.remoteUrl, parsed, parsed.maxAttempts, parsed.batchLimit);
       return;
     case 'sync:pull':
-      await runSyncPull(parsed.databasePath, parsed.userId, parsed.remoteUrl);
+      await runSyncPull(parsed.databasePath, parsed.userId, parsed.remoteUrl, parsed);
       return;
     case 'sync:run':
-      await runSyncRun(parsed.databasePath, parsed.userId, parsed.remoteUrl, parsed.maxAttempts, parsed.batchLimit);
+      await runSyncRun(parsed.databasePath, parsed.userId, parsed.remoteUrl, parsed, parsed.maxAttempts, parsed.batchLimit);
       return;
     case 'places:list':
       await runPlacesList(parsed.databasePath, parsed.userId);

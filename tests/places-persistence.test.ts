@@ -24,6 +24,7 @@ import {
   upsertPlace,
 } from '../places/src';
 import { schemaMigrations } from '../schema/src';
+import { createTestAuthSession } from './helpers/auth';
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(currentDirectory, '..');
@@ -441,12 +442,15 @@ test('backend place routes: upsert, list, get, delete', { timeout: 20_000 }, asy
       port,
       databasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
+      authSession = await createTestAuthSession(baseUrl, 'user-http');
+
       // Upsert a place
-      const upsertResponse = await fetch(`${baseUrl}/users/user-http/places/upsert-google`, {
+      const upsertResponse = await authSession.fetch(`${baseUrl}/users/user-http/places/upsert-google`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -467,7 +471,7 @@ test('backend place routes: upsert, list, get, delete', { timeout: 20_000 }, asy
       const placeId = upsertPayload.place.id;
 
       // List places
-      const listResponse = await fetch(`${baseUrl}/users/user-http/places`);
+      const listResponse = await authSession.fetch(`${baseUrl}/users/user-http/places`);
       assert.equal(listResponse.status, 200);
 
       const listPayload = (await listResponse.json()) as { places: Array<{ id: string }> };
@@ -478,7 +482,7 @@ test('backend place routes: upsert, list, get, delete', { timeout: 20_000 }, asy
       assert.equal(listedPlace.id, placeId);
 
       // Get single place
-      const getResponse = await fetch(`${baseUrl}/users/user-http/places/${placeId}`);
+      const getResponse = await authSession.fetch(`${baseUrl}/users/user-http/places/${placeId}`);
       assert.equal(getResponse.status, 200);
 
       const getPayload = (await getResponse.json()) as { place: { id: string; name: string } };
@@ -486,7 +490,7 @@ test('backend place routes: upsert, list, get, delete', { timeout: 20_000 }, asy
       assert.equal(getPayload.place.name, 'HTTP Cafe');
 
       // Upsert same google_place_id — should update, not create
-      const upsertAgainResponse = await fetch(`${baseUrl}/users/user-http/places/upsert-google`, {
+      const upsertAgainResponse = await authSession.fetch(`${baseUrl}/users/user-http/places/upsert-google`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -504,12 +508,12 @@ test('backend place routes: upsert, list, get, delete', { timeout: 20_000 }, asy
       assert.equal(upsertAgainPayload.place.name, 'HTTP Cafe Updated');
 
       // Still only one place
-      const listAfterUpdate = await fetch(`${baseUrl}/users/user-http/places`);
+      const listAfterUpdate = await authSession.fetch(`${baseUrl}/users/user-http/places`);
       const listAfterPayload = (await listAfterUpdate.json()) as { places: Array<{ id: string }> };
       assert.equal(listAfterPayload.places.length, 1);
 
       // Delete place
-      const deleteResponse = await fetch(`${baseUrl}/users/user-http/places/${placeId}`, {
+      const deleteResponse = await authSession.fetch(`${baseUrl}/users/user-http/places/${placeId}`, {
         method: 'DELETE',
       });
 
@@ -519,14 +523,18 @@ test('backend place routes: upsert, list, get, delete', { timeout: 20_000 }, asy
       assert.equal(deletePayload.removed, true);
 
       // Place no longer listed
-      const listAfterDelete = await fetch(`${baseUrl}/users/user-http/places`);
+      const listAfterDelete = await authSession.fetch(`${baseUrl}/users/user-http/places`);
       const listAfterDeletePayload = (await listAfterDelete.json()) as { places: Array<{ id: string }> };
       assert.equal(listAfterDeletePayload.places.length, 0);
 
       // Get returns 404
-      const getAfterDelete = await fetch(`${baseUrl}/users/user-http/places/${placeId}`);
+      const getAfterDelete = await authSession.fetch(`${baseUrl}/users/user-http/places/${placeId}`);
       assert.equal(getAfterDelete.status, 404);
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });
@@ -543,11 +551,14 @@ test('backend returns 400 for invalid place input', { timeout: 20_000 }, async (
       port,
       databasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
-      const response = await fetch(`${baseUrl}/users/user-val/places/upsert-google`, {
+      authSession = await createTestAuthSession(baseUrl, 'user-val');
+
+      const response = await authSession.fetch(`${baseUrl}/users/user-val/places/upsert-google`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'No Coords' }),
@@ -558,6 +569,10 @@ test('backend returns 400 for invalid place input', { timeout: 20_000 }, async (
       const payload = (await response.json()) as { error: string };
       assert.ok(payload.error);
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });

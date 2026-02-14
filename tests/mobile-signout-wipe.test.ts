@@ -37,6 +37,7 @@ test('wipeLocalDataOnSignOut removes all app-scoped keys and keeps external keys
 
   const storage = createMemoryStorage({
     '@bookmarks_user': '{"id":"user-a"}',
+    '@bookmarks_auth_session': '{"userId":"user-a","accessToken":"token"}',
     '@bookmarks_places': '[{"id":"place-1"}]',
     '@bookmarks_collections': '[{"id":"collection-1"}]',
     '@another_app_token': 'keep-me',

@@ -21,6 +21,7 @@ import {
   upsertPlace,
 } from '../places/src';
 import { schemaMigrations } from '../schema/src';
+import { createTestAuthSession } from './helpers/auth';
 
 const getAvailablePort = async (): Promise<number> => {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -104,11 +105,14 @@ test('pushPlaceOutbox sends local place changes to backend', { timeout: 30_000 }
       port,
       databasePath: backendDatabasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
       await migrateDatabase(localDatabase, schemaMigrations);
+
+      authSession = await createTestAuthSession(baseUrl, 'places-sync-user');
 
       await upsertPlace(localDatabase, {
         userId: 'places-sync-user',
@@ -123,7 +127,7 @@ test('pushPlaceOutbox sends local place changes to backend', { timeout: 30_000 }
         recordOutbox: true,
       });
 
-      const remote = createPlacesHttpClient({ baseUrl });
+      const remote = createPlacesHttpClient(authSession.httpClientOptions);
       const pushResult = await pushPlaceOutbox({
         database: localDatabase,
         userId: 'places-sync-user',
@@ -133,7 +137,7 @@ test('pushPlaceOutbox sends local place changes to backend', { timeout: 30_000 }
       assert.equal(pushResult.pendingCount, 1);
       assert.equal(pushResult.pushedCount, 1);
 
-      const backendListResponse = await fetch(`${baseUrl}/users/places-sync-user/places`);
+      const backendListResponse = await authSession.fetch(`${baseUrl}/users/places-sync-user/places`);
       assert.equal(backendListResponse.status, 200);
 
       const backendListPayload = (await backendListResponse.json()) as {
@@ -146,6 +150,10 @@ test('pushPlaceOutbox sends local place changes to backend', { timeout: 30_000 }
       const pendingAfterPush = await listPendingPlaceMutations(localDatabase, 'places-sync-user');
       assert.equal(pendingAfterPush.length, 0);
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
       await localDatabase.close();
     }
@@ -165,13 +173,16 @@ test('pullPlaceUpdates applies remote place changes locally', { timeout: 30_000 
       port,
       databasePath: backendDatabasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
       await migrateDatabase(localDatabase, schemaMigrations);
 
-      const upsertRemoteResponse = await fetch(`${baseUrl}/users/places-sync-user/places/upsert-google`, {
+      authSession = await createTestAuthSession(baseUrl, 'places-sync-user');
+
+      const upsertRemoteResponse = await authSession.fetch(`${baseUrl}/users/places-sync-user/places/upsert-google`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -185,7 +196,7 @@ test('pullPlaceUpdates applies remote place changes locally', { timeout: 30_000 
 
       assert.equal(upsertRemoteResponse.status, 200);
 
-      const remote = createPlacesHttpClient({ baseUrl });
+      const remote = createPlacesHttpClient(authSession.httpClientOptions);
       const pullResult = await pullPlaceUpdates({
         database: localDatabase,
         userId: 'places-sync-user',
@@ -200,6 +211,10 @@ test('pullPlaceUpdates applies remote place changes locally', { timeout: 30_000 
       assert.equal(localPlaces[0]?.name, 'Remote Place');
       assert.equal(localPlaces[0]?.googlePlaceId, 'gp-remote-place');
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
       await localDatabase.close();
     }
@@ -219,11 +234,14 @@ test('syncPlaces round-trip applies backend edits after push', { timeout: 30_000
       port,
       databasePath: backendDatabasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
       await migrateDatabase(localDatabase, schemaMigrations);
+
+      authSession = await createTestAuthSession(baseUrl, 'places-sync-user');
 
       await upsertPlace(localDatabase, {
         userId: 'places-sync-user',
@@ -238,7 +256,7 @@ test('syncPlaces round-trip applies backend edits after push', { timeout: 30_000
         recordOutbox: true,
       });
 
-      const remote = createPlacesHttpClient({ baseUrl });
+      const remote = createPlacesHttpClient(authSession.httpClientOptions);
 
       const firstSync = await syncPlaces({
         database: localDatabase,
@@ -248,7 +266,7 @@ test('syncPlaces round-trip applies backend edits after push', { timeout: 30_000
 
       assert.equal(firstSync.push.pushedCount, 1);
 
-      const backendEditResponse = await fetch(`${baseUrl}/users/places-sync-user/places/upsert-google`, {
+      const backendEditResponse = await authSession.fetch(`${baseUrl}/users/places-sync-user/places/upsert-google`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -275,6 +293,10 @@ test('syncPlaces round-trip applies backend edits after push', { timeout: 30_000
       assert.equal(localPlaces[0]?.name, 'Server Edited');
       assert.equal(localPlaces[0]?.address, 'Paris');
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
       await localDatabase.close();
     }

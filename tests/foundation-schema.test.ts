@@ -11,6 +11,7 @@ import { createNodeSqliteAdapter, listUserTables, migrateDatabase } from '../db/
 import { schemaMigrations } from '../schema/src';
 
 const expectedTables = [
+  'auth_sessions',
   'collection_places',
   'collections',
   'outbox',
@@ -40,7 +41,7 @@ test('migrateDatabase creates all expected v1 tables', async () => {
       const applied = await migrateDatabase(database, schemaMigrations);
       const tables = await listUserTables(database);
 
-      assert.deepEqual(applied, ['0001_initial', '0002_sync_state_entity_type']);
+      assert.deepEqual(applied, ['0001_initial', '0002_sync_state_entity_type', '0003_auth_sessions']);
       assert.deepEqual(tables, expectedTables);
     } finally {
       await database.close();
@@ -58,7 +59,7 @@ test('migrateDatabase is idempotent', async () => {
       const migrationRows = await database.all<{ id: string }>('SELECT id FROM schema_migrations ORDER BY id;');
 
       assert.deepEqual(appliedSecondRun, []);
-      assert.deepEqual(migrationRows.map((row) => row.id), ['0001_initial', '0002_sync_state_entity_type']);
+      assert.deepEqual(migrationRows.map((row) => row.id), ['0001_initial', '0002_sync_state_entity_type', '0003_auth_sessions']);
     } finally {
       await database.close();
     }

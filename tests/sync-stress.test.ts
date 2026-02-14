@@ -16,6 +16,7 @@ import { nowIso } from '../core/src';
 import { createBackendServer } from '../apps/backend/src/server';
 import { createNodeSqliteAdapter, migrateDatabase } from '../db/src';
 import { schemaMigrations } from '../schema/src';
+import { createTestAuthSession } from './helpers/auth';
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(currentDirectory, '..');
@@ -145,6 +146,24 @@ const getOutboxAttempts = async (
   );
 };
 
+type TestAuthSession = Awaited<ReturnType<typeof createTestAuthSession>>;
+
+const toCliAuthEnvironment = (authSession: TestAuthSession | null): Record<string, string> => {
+  if (!authSession) {
+    throw new Error('Expected an authenticated test session before invoking CLI sync command.');
+  }
+
+  return {
+    BOOKMARKS_AUTH_ACCESS_TOKEN: authSession.getAccessToken(),
+    BOOKMARKS_AUTH_REFRESH_TOKEN: authSession.getRefreshToken(),
+  };
+};
+
+const dummyCliAuthEnvironment = {
+  BOOKMARKS_AUTH_ACCESS_TOKEN: 'dummy-access-token',
+  BOOKMARKS_AUTH_REFRESH_TOKEN: 'dummy-refresh-token',
+};
+
 test('high-volume place push processes all places via CLI', { timeout: 60_000 }, async () => {
   await withTemporaryDirectory(async (directory) => {
     const localDbPath = join(directory, 'local.sqlite');
@@ -160,8 +179,11 @@ test('high-volume place push processes all places via CLI', { timeout: 60_000 },
 
     const { port } = await backend.start();
     const baseUrl = `http://127.0.0.1:${port}`;
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     try {
+      authSession = await createTestAuthSession(baseUrl, userId);
+
       // Initialize local database
       await runNodeTsxCommand(cliEntrypoint, ['db:init', '--db', localDbPath]);
 
@@ -238,12 +260,16 @@ test('high-volume place push processes all places via CLI', { timeout: 60_000 },
       const maxIterations = 5;
 
       while (iterations < maxIterations) {
-        const pushOutput = await runNodeTsxCommand(cliEntrypoint, [
-          'sync:push',
-          '--db', localDbPath,
-          '--user', userId,
-          '--remote-url', baseUrl,
-        ]);
+        const pushOutput = await runNodeTsxCommand(
+          cliEntrypoint,
+          [
+            'sync:push',
+            '--db', localDbPath,
+            '--user', userId,
+            '--remote-url', baseUrl,
+          ],
+          toCliAuthEnvironment(authSession)
+        );
 
         const pushResult = JSON.parse(pushOutput.stdout) as SyncPushResult;
         totalPushed += pushResult.places.pushedCount;
@@ -266,7 +292,7 @@ test('high-volume place push processes all places via CLI', { timeout: 60_000 },
       assert.equal(totalPushed, placeCount, 'Should push all 120 places across batches');
 
       // Assert: backend contains all expected places
-      const backendListResponse = await fetch(`${baseUrl}/users/${userId}/places`);
+      const backendListResponse = await authSession.fetch(`${baseUrl}/users/${userId}/places`);
       assert.equal(backendListResponse.status, 200);
       const backendList = (await backendListResponse.json()) as { places: unknown[] };
       assert.equal(backendList.places.length, placeCount, 'Backend should have all 120 places');
@@ -278,6 +304,10 @@ test('high-volume place push processes all places via CLI', { timeout: 60_000 },
       assert.equal(pendingAfter, 0, 'Outbox should be empty after successful push');
       await localDb3.close();
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });
@@ -299,15 +329,18 @@ test('high-volume full-state pull retrieves all entities via CLI', { timeout: 60
 
     const { port } = await backend.start();
     const baseUrl = `http://127.0.0.1:${port}`;
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     try {
+      authSession = await createTestAuthSession(baseUrl, userId);
+
       // Initialize local database
       await runNodeTsxCommand(cliEntrypoint, ['db:init', '--db', localDbPath]);
 
       // Seed backend directly via HTTP for speed
       // Seed preferences with a far-future timestamp to ensure remote wins over local defaults
       const farFutureTimestamp = '2099-01-01T00:00:00.000Z';
-      const prefsResponse = await fetch(`${baseUrl}/users/${userId}/preferences`, {
+      const prefsResponse = await authSession.fetch(`${baseUrl}/users/${userId}/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -324,7 +357,7 @@ test('high-volume full-state pull retrieves all entities via CLI', { timeout: 60
       // Seed places
       const placeIds: string[] = [];
       for (let i = 0; i < placeCount; i++) {
-        const placeResponse = await fetch(`${baseUrl}/users/${userId}/places/upsert-google`, {
+        const placeResponse: Response = await authSession.fetch(`${baseUrl}/users/${userId}/places/upsert-google`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -343,7 +376,7 @@ test('high-volume full-state pull retrieves all entities via CLI', { timeout: 60
       // Seed collections with memberships
       const collectionIds: string[] = [];
       for (let i = 0; i < collectionCount; i++) {
-        const collectionResponse = await fetch(`${baseUrl}/users/${userId}/collections`, {
+        const collectionResponse: Response = await authSession.fetch(`${baseUrl}/users/${userId}/collections`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: `Collection ${i}` }),
@@ -357,7 +390,7 @@ test('high-volume full-state pull retrieves all entities via CLI', { timeout: 60
         const placesToAdd = 3;
         for (let j = 0; j < placesToAdd; j++) {
           const placeIndex = (i * placesToAdd + j) % placeCount;
-          const membershipResponse = await fetch(
+          const membershipResponse = await authSession.fetch(
             `${baseUrl}/users/${userId}/collections/${collectionId}/places`,
             {
               method: 'POST',
@@ -370,12 +403,16 @@ test('high-volume full-state pull retrieves all entities via CLI', { timeout: 60
       }
 
       // Pull via CLI sync:pull
-      const pullOutput = await runNodeTsxCommand(cliEntrypoint, [
-        'sync:pull',
-        '--db', localDbPath,
-        '--user', userId,
-        '--remote-url', baseUrl,
-      ]);
+      const pullOutput = await runNodeTsxCommand(
+        cliEntrypoint,
+        [
+          'sync:pull',
+          '--db', localDbPath,
+          '--user', userId,
+          '--remote-url', baseUrl,
+        ],
+        toCliAuthEnvironment(authSession)
+      );
 
       const pullResult = JSON.parse(pullOutput.stdout) as SyncPullResult;
 
@@ -433,6 +470,10 @@ test('high-volume full-state pull retrieves all entities via CLI', { timeout: 60
 
       await localDb.close();
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });
@@ -453,8 +494,11 @@ test('repeated sync cycle maintains convergence', { timeout: 60_000 }, async () 
 
     const { port } = await backend.start();
     const baseUrl = `http://127.0.0.1:${port}`;
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     try {
+      authSession = await createTestAuthSession(baseUrl, userId);
+
       // Initialize local database
       await runNodeTsxCommand(cliEntrypoint, ['db:init', '--db', localDbPath]);
 
@@ -485,15 +529,19 @@ test('repeated sync cycle maintains convergence', { timeout: 60_000 }, async () 
         ]);
 
         // Run sync (push local mutations)
-        await runNodeTsxCommand(cliEntrypoint, [
-          'sync:run',
-          '--db', localDbPath,
-          '--user', userId,
-          '--remote-url', baseUrl,
-        ]);
+        await runNodeTsxCommand(
+          cliEntrypoint,
+          [
+            'sync:run',
+            '--db', localDbPath,
+            '--user', userId,
+            '--remote-url', baseUrl,
+          ],
+          toCliAuthEnvironment(authSession)
+        );
 
         // Mutate backend (newer timestamp/op)
-        const backendResponse = await fetch(`${baseUrl}/users/${userId}/places/upsert-google`, {
+        const backendResponse: Response = await authSession.fetch(`${baseUrl}/users/${userId}/places/upsert-google`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -507,12 +555,16 @@ test('repeated sync cycle maintains convergence', { timeout: 60_000 }, async () 
         assert.equal(backendResponse.status, 200);
 
         // Run sync again (pull backend changes)
-        await runNodeTsxCommand(cliEntrypoint, [
-          'sync:run',
-          '--db', localDbPath,
-          '--user', userId,
-          '--remote-url', baseUrl,
-        ]);
+        await runNodeTsxCommand(
+          cliEntrypoint,
+          [
+            'sync:run',
+            '--db', localDbPath,
+            '--user', userId,
+            '--remote-url', baseUrl,
+          ],
+          toCliAuthEnvironment(authSession)
+        );
 
         // Verify no pending outbox after each cycle
         const localDb = createNodeSqliteAdapter({ filename: localDbPath });
@@ -533,7 +585,7 @@ test('repeated sync cycle maintains convergence', { timeout: 60_000 }, async () 
       assert.ok(localPlace);
 
       // Backend state
-      const backendResponse = await fetch(`${baseUrl}/users/${userId}/places`);
+      const backendResponse = await authSession.fetch(`${baseUrl}/users/${userId}/places`);
       const backendData = (await backendResponse.json()) as { places: Array<{ name: string }> };
       assert.equal(backendData.places[0]?.name, localPlace?.name);
 
@@ -543,6 +595,10 @@ test('repeated sync cycle maintains convergence', { timeout: 60_000 }, async () 
 
       await localDb.close();
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });
@@ -612,13 +668,17 @@ test('retry and dead-letter behavior with failing remote', { timeout: 60_000 }, 
     // With attempts=0 initially, after failure: attempts=1 (still < maxAttempts=2, so eligible)
     await assert.rejects(
       async () => {
-        await runNodeTsxCommand(cliEntrypoint, [
-          'sync:push',
-          '--db', localDbPath,
-          '--user', userId,
-          '--remote-url', unreachableUrl,
-          '--max-attempts', maxAttempts.toString(),
-        ]);
+        await runNodeTsxCommand(
+          cliEntrypoint,
+          [
+            'sync:push',
+            '--db', localDbPath,
+            '--user', userId,
+            '--remote-url', unreachableUrl,
+            '--max-attempts', maxAttempts.toString(),
+          ],
+          dummyCliAuthEnvironment
+        );
       },
       (error: Error) => {
         assert.ok(error.message.includes('Command failed'), 'First push should fail');
@@ -641,13 +701,17 @@ test('retry and dead-letter behavior with failing remote', { timeout: 60_000 }, 
     // After this failure: attempts=2 (>= maxAttempts=2, so dead-lettered)
     await assert.rejects(
       async () => {
-        await runNodeTsxCommand(cliEntrypoint, [
-          'sync:push',
-          '--db', localDbPath,
-          '--user', userId,
-          '--remote-url', unreachableUrl,
-          '--max-attempts', maxAttempts.toString(),
-        ]);
+        await runNodeTsxCommand(
+          cliEntrypoint,
+          [
+            'sync:push',
+            '--db', localDbPath,
+            '--user', userId,
+            '--remote-url', unreachableUrl,
+            '--max-attempts', maxAttempts.toString(),
+          ],
+          dummyCliAuthEnvironment
+        );
       },
       (error: Error) => {
         assert.ok(error.message.includes('Command failed'), 'Second push should fail');
@@ -674,18 +738,25 @@ test('retry and dead-letter behavior with failing remote', { timeout: 60_000 }, 
 
     const { port } = await backend.start();
     const workingUrl = `http://127.0.0.1:${port}`;
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     try {
+      authSession = await createTestAuthSession(workingUrl, userId);
+
       // Third push with maxAttempts=2 and working backend
       // All mutations now have attempts=2, which >= maxAttempts=2, so they are ALL dead-lettered
       // pushedCount should be 0, skippedDeadLetterCount should be 15
-      const pushOutput = await runNodeTsxCommand(cliEntrypoint, [
-        'sync:push',
-        '--db', localDbPath,
-        '--user', userId,
-        '--remote-url', workingUrl,
-        '--max-attempts', maxAttempts.toString(),
-      ]);
+      const pushOutput = await runNodeTsxCommand(
+        cliEntrypoint,
+        [
+          'sync:push',
+          '--db', localDbPath,
+          '--user', userId,
+          '--remote-url', workingUrl,
+          '--max-attempts', maxAttempts.toString(),
+        ],
+        toCliAuthEnvironment(authSession)
+      );
 
       const pushResult = JSON.parse(pushOutput.stdout) as SyncPushResult;
 
@@ -731,13 +802,17 @@ test('retry and dead-letter behavior with failing remote', { timeout: 60_000 }, 
       //   retry-outbox-0: attempts=0 < 2 -> eligible
       //   retry-outbox-1: attempts=1 < 2 -> eligible
       //   remaining 13:   attempts=2 >= 2 -> dead-lettered
-      const pushOutput2 = await runNodeTsxCommand(cliEntrypoint, [
-        'sync:push',
-        '--db', localDbPath,
-        '--user', userId,
-        '--remote-url', workingUrl,
-        '--max-attempts', maxAttempts.toString(),
-      ]);
+      const pushOutput2 = await runNodeTsxCommand(
+        cliEntrypoint,
+        [
+          'sync:push',
+          '--db', localDbPath,
+          '--user', userId,
+          '--remote-url', workingUrl,
+          '--max-attempts', maxAttempts.toString(),
+        ],
+        toCliAuthEnvironment(authSession)
+      );
 
       const pushResult2 = JSON.parse(pushOutput2.stdout) as SyncPushResult;
 
@@ -756,6 +831,10 @@ test('retry and dead-letter behavior with failing remote', { timeout: 60_000 }, 
         'Should have 13 pending dead-lettered rows after pushing 2');
       await localDb6.close();
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });
@@ -853,17 +932,24 @@ test('eligible rows are not starved by dead-lettered rows beyond batch limit', {
 
     const { port } = await backend.start();
     const baseUrl = `http://127.0.0.1:${port}`;
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     try {
+      authSession = await createTestAuthSession(baseUrl, userId);
+
       // Push with maxAttempts=2 and batchLimit=5 — dead-lettered rows must not block the eligible row
-      const pushOutput = await runNodeTsxCommand(cliEntrypoint, [
-        'sync:push',
-        '--db', localDbPath,
-        '--user', userId,
-        '--remote-url', baseUrl,
-        '--max-attempts', maxAttempts.toString(),
-        '--batch-limit', batchLimit.toString(),
-      ]);
+      const pushOutput = await runNodeTsxCommand(
+        cliEntrypoint,
+        [
+          'sync:push',
+          '--db', localDbPath,
+          '--user', userId,
+          '--remote-url', baseUrl,
+          '--max-attempts', maxAttempts.toString(),
+          '--batch-limit', batchLimit.toString(),
+        ],
+        toCliAuthEnvironment(authSession)
+      );
 
       const pushResult = JSON.parse(pushOutput.stdout) as SyncPushResult;
 
@@ -886,7 +972,7 @@ test('eligible rows are not starved by dead-lettered rows beyond batch limit', {
         'Only dead-lettered rows should remain pending');
 
       // Verify backend received the eligible mutation
-      const backendPrefsResponse = await fetch(`${baseUrl}/users/${userId}/preferences`);
+      const backendPrefsResponse = await authSession.fetch(`${baseUrl}/users/${userId}/preferences`);
       assert.equal(backendPrefsResponse.status, 200);
       const backendPrefs = (await backendPrefsResponse.json()) as { preferences: { hexagonTheme: string } };
       assert.equal(backendPrefs.preferences.hexagonTheme, 'obsidian',
@@ -894,6 +980,10 @@ test('eligible rows are not starved by dead-lettered rows beyond batch limit', {
 
       await localDb2.close();
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });
@@ -913,18 +1003,25 @@ test('cursor progression across multiple pulls', { timeout: 30_000 }, async () =
 
     const { port } = await backend.start();
     const baseUrl = `http://127.0.0.1:${port}`;
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     try {
+      authSession = await createTestAuthSession(baseUrl, userId);
+
       // Initialize local database
       await runNodeTsxCommand(cliEntrypoint, ['db:init', '--db', localDbPath]);
 
       // First pull (empty remote) - should get server timestamp as cursor
-      const pullOutput1 = await runNodeTsxCommand(cliEntrypoint, [
-        'sync:pull',
-        '--db', localDbPath,
-        '--user', userId,
-        '--remote-url', baseUrl,
-      ]);
+      const pullOutput1 = await runNodeTsxCommand(
+        cliEntrypoint,
+        [
+          'sync:pull',
+          '--db', localDbPath,
+          '--user', userId,
+          '--remote-url', baseUrl,
+        ],
+        toCliAuthEnvironment(authSession)
+      );
       const pullResult1 = JSON.parse(pullOutput1.stdout) as SyncPullResult;
       const cursor1 = pullResult1.places.cursor;
 
@@ -938,7 +1035,7 @@ test('cursor progression across multiple pulls', { timeout: 30_000 }, async () =
       // Add multiple places sequentially to create multiple cursor values
       const placeCount = 5;
       for (let i = 0; i < placeCount; i++) {
-        const placeResponse = await fetch(`${baseUrl}/users/${userId}/places/upsert-google`, {
+        const placeResponse: Response = await authSession.fetch(`${baseUrl}/users/${userId}/places/upsert-google`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -951,12 +1048,16 @@ test('cursor progression across multiple pulls', { timeout: 30_000 }, async () =
         assert.equal(placeResponse.status, 200);
 
         // Pull after each place creation to get updated cursor
-        const pullOutput = await runNodeTsxCommand(cliEntrypoint, [
-          'sync:pull',
-          '--db', localDbPath,
-          '--user', userId,
-          '--remote-url', baseUrl,
-        ]);
+        const pullOutput = await runNodeTsxCommand(
+          cliEntrypoint,
+          [
+            'sync:pull',
+            '--db', localDbPath,
+            '--user', userId,
+            '--remote-url', baseUrl,
+          ],
+          toCliAuthEnvironment(authSession)
+        );
         const pullResult = JSON.parse(pullOutput.stdout) as SyncPullResult;
 
         // Verify each pull applies exactly one new place
@@ -1018,12 +1119,16 @@ test('cursor progression across multiple pulls', { timeout: 30_000 }, async () =
       await localDb.close();
 
       // Final pull - verify applied count is 0 (idempotent) and cursor remains stable
-      const finalPullOutput = await runNodeTsxCommand(cliEntrypoint, [
-        'sync:pull',
-        '--db', localDbPath,
-        '--user', userId,
-        '--remote-url', baseUrl,
-      ]);
+      const finalPullOutput = await runNodeTsxCommand(
+        cliEntrypoint,
+        [
+          'sync:pull',
+          '--db', localDbPath,
+          '--user', userId,
+          '--remote-url', baseUrl,
+        ],
+        toCliAuthEnvironment(authSession)
+      );
       const finalPullResult = JSON.parse(finalPullOutput.stdout) as SyncPullResult;
 
       // appliedCount should be 0 since all entities are already synced
@@ -1048,6 +1153,10 @@ test('cursor progression across multiple pulls', { timeout: 30_000 }, async () =
         'sync_state.remote_cursor should match final pull cursor');
       await localDb2.close();
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
     }
   });

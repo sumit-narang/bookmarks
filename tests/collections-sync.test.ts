@@ -31,6 +31,7 @@ import {
   upsertPlace,
 } from '../places/src';
 import { schemaMigrations } from '../schema/src';
+import { createTestAuthSession } from './helpers/auth';
 
 const getAvailablePort = async (): Promise<number> => {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -139,11 +140,14 @@ test('pushCollectionOutbox sends local collection changes to backend', { timeout
       port,
       databasePath: backendDatabasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
       await migrateDatabase(localDatabase, schemaMigrations);
+
+      authSession = await createTestAuthSession(baseUrl, 'collections-sync-user');
 
       const place = await upsertPlace(localDatabase, {
         userId: 'collections-sync-user',
@@ -175,8 +179,8 @@ test('pushCollectionOutbox sends local collection changes to backend', { timeout
         recordOutbox: true,
       });
 
-      const placesRemote = createPlacesHttpClient({ baseUrl });
-      const collectionsRemote = createCollectionsHttpClient({ baseUrl });
+      const placesRemote = createPlacesHttpClient(authSession.httpClientOptions);
+      const collectionsRemote = createCollectionsHttpClient(authSession.httpClientOptions);
 
       await pushPlaceOutbox({
         database: localDatabase,
@@ -193,7 +197,7 @@ test('pushCollectionOutbox sends local collection changes to backend', { timeout
       assert.equal(pushResult.pendingCount, 2);
       assert.equal(pushResult.pushedCount, 2);
 
-      const backendCollectionsResponse = await fetch(`${baseUrl}/users/collections-sync-user/collections`);
+      const backendCollectionsResponse = await authSession.fetch(`${baseUrl}/users/collections-sync-user/collections`);
       assert.equal(backendCollectionsResponse.status, 200);
       const backendCollectionsPayload = (await backendCollectionsResponse.json()) as {
         collections: Array<{ id: string; name: string; placeCount: number }>;
@@ -203,7 +207,7 @@ test('pushCollectionOutbox sends local collection changes to backend', { timeout
       assert.equal(backendCollectionsPayload.collections[0]?.name, 'Push Collection');
       assert.equal(backendCollectionsPayload.collections[0]?.placeCount, 1);
 
-      const backendListPlacesResponse = await fetch(
+      const backendListPlacesResponse = await authSession.fetch(
         `${baseUrl}/users/collections-sync-user/collections/${collection.id}/places`
       );
       assert.equal(backendListPlacesResponse.status, 200);
@@ -214,6 +218,10 @@ test('pushCollectionOutbox sends local collection changes to backend', { timeout
       assert.equal(backendListPlacesPayload.places.length, 1);
       assert.equal(backendListPlacesPayload.places[0]?.id, place.id);
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
       await localDatabase.close();
     }
@@ -233,13 +241,16 @@ test('pullCollectionUpdates applies remote collection state locally', { timeout:
       port,
       databasePath: backendDatabasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
       await migrateDatabase(localDatabase, schemaMigrations);
 
-      const createPlaceResponse = await fetch(`${baseUrl}/users/collections-sync-user/places/upsert-google`, {
+      authSession = await createTestAuthSession(baseUrl, 'collections-sync-user');
+
+      const createPlaceResponse = await authSession.fetch(`${baseUrl}/users/collections-sync-user/places/upsert-google`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -253,7 +264,7 @@ test('pullCollectionUpdates applies remote collection state locally', { timeout:
       const createPlacePayload = (await createPlaceResponse.json()) as { place: { id: string } };
       const placeId = createPlacePayload.place.id;
 
-      const createCollectionResponse = await fetch(`${baseUrl}/users/collections-sync-user/collections`, {
+      const createCollectionResponse = await authSession.fetch(`${baseUrl}/users/collections-sync-user/collections`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'Remote Collection' }),
@@ -262,15 +273,15 @@ test('pullCollectionUpdates applies remote collection state locally', { timeout:
       const createCollectionPayload = (await createCollectionResponse.json()) as { collection: { id: string } };
       const collectionId = createCollectionPayload.collection.id;
 
-      const addPlaceResponse = await fetch(`${baseUrl}/users/collections-sync-user/collections/${collectionId}/places`, {
+      const addPlaceResponse = await authSession.fetch(`${baseUrl}/users/collections-sync-user/collections/${collectionId}/places`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placeId }),
       });
       assert.equal(addPlaceResponse.status, 200);
 
-      const placesRemote = createPlacesHttpClient({ baseUrl });
-      const collectionsRemote = createCollectionsHttpClient({ baseUrl });
+      const placesRemote = createPlacesHttpClient(authSession.httpClientOptions);
+      const collectionsRemote = createCollectionsHttpClient(authSession.httpClientOptions);
 
       await pullPlaceUpdates({
         database: localDatabase,
@@ -299,6 +310,10 @@ test('pullCollectionUpdates applies remote collection state locally', { timeout:
       assert.equal(placesInCollection.length, 1);
       assert.equal(placesInCollection[0]?.id, placeId);
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
       await localDatabase.close();
     }
@@ -318,11 +333,14 @@ test('syncCollections round-trip applies backend membership edits', { timeout: 3
       port,
       databasePath: backendDatabasePath,
     });
+    let authSession: Awaited<ReturnType<typeof createTestAuthSession>> | null = null;
 
     await backend.start();
 
     try {
       await migrateDatabase(localDatabase, schemaMigrations);
+
+      authSession = await createTestAuthSession(baseUrl, 'collections-sync-user');
 
       const place = await upsertPlace(localDatabase, {
         userId: 'collections-sync-user',
@@ -354,8 +372,8 @@ test('syncCollections round-trip applies backend membership edits', { timeout: 3
         recordOutbox: true,
       });
 
-      const placesRemote = createPlacesHttpClient({ baseUrl });
-      const collectionsRemote = createCollectionsHttpClient({ baseUrl });
+      const placesRemote = createPlacesHttpClient(authSession.httpClientOptions);
+      const collectionsRemote = createCollectionsHttpClient(authSession.httpClientOptions);
 
       await pushPlaceOutbox({
         database: localDatabase,
@@ -371,7 +389,7 @@ test('syncCollections round-trip applies backend membership edits', { timeout: 3
 
       assert.equal(firstSync.push.pushedCount, 2);
 
-      const backendUpdateResponse = await fetch(
+      const backendUpdateResponse = await authSession.fetch(
         `${baseUrl}/users/collections-sync-user/collections/${collection.id}`,
         {
           method: 'PUT',
@@ -381,7 +399,7 @@ test('syncCollections round-trip applies backend membership edits', { timeout: 3
       );
       assert.equal(backendUpdateResponse.status, 200);
 
-      const backendRemoveMembershipResponse = await fetch(
+      const backendRemoveMembershipResponse = await authSession.fetch(
         `${baseUrl}/users/collections-sync-user/collections/${collection.id}/places/${place.id}`,
         { method: 'DELETE' }
       );
@@ -412,6 +430,10 @@ test('syncCollections round-trip applies backend membership edits', { timeout: 3
       });
       assert.equal(localCollectionPlaces.length, 0);
     } finally {
+      if (authSession) {
+        await authSession.revoke();
+      }
+
       await backend.stop();
       await localDatabase.close();
     }

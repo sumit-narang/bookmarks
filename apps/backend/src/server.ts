@@ -2,11 +2,31 @@
  * Backend server for persistence foundation routes.
  */
 
+import { createHmac, createPublicKey, createVerify, randomBytes, timingSafeEqual } from 'node:crypto';
+import type { JsonWebKey as CryptoJsonWebKey } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { nowIso } from '../../../core/src';
+import {
+  createAuthSession,
+  getAuthSessionById,
+  hashAuthToken,
+  isAuthSessionActive,
+  issueAuthTokenPair,
+  revokeAuthSession,
+  rotateAuthSession,
+  upsertAuthUser,
+  verifyAuthToken,
+  type AuthIdentityInput,
+  type AuthSessionEnvelope,
+  type AuthTokenCodecOptions,
+  type AuthTokenPayload,
+  type CreateAuthSessionRequest,
+  type RefreshAuthSessionRequest,
+  type RevokeAuthSessionRequest,
+} from '../../../auth/src';
+import { createUuid, nowIso } from '../../../core/src';
 import { createNodeSqliteAdapter, listUserTables, migrateDatabase } from '../../../db/src';
 import {
   addPlaceToCollection,
@@ -48,6 +68,15 @@ export interface BackendServerOptions {
   host: string;
   port: number;
   databasePath: string;
+  auth?: Partial<BackendAuthOptions>;
+}
+
+export interface BackendAuthOptions {
+  tokenSecret: string;
+  tokenIssuer: string;
+  tokenAudience: string;
+  accessTokenTtlSeconds: number;
+  refreshTokenTtlSeconds: number;
 }
 
 export interface BackendServer {
@@ -55,6 +84,36 @@ export interface BackendServer {
   start(): Promise<{ port: number }>;
   stop(): Promise<void>;
 }
+
+const DEFAULT_AUTH_TOKEN_ISSUER = 'bookmarks-backend';
+const DEFAULT_AUTH_TOKEN_AUDIENCE = 'bookmarks-clients';
+const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 60 * 15;
+const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30;
+const GOOGLE_USER_INFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo';
+const APPLE_JWKS_URL = 'https://appleid.apple.com/auth/keys';
+const APPLE_TOKEN_ISSUER = 'https://appleid.apple.com';
+const JWK_CACHE_FALLBACK_TTL_MILLISECONDS = 5 * 60 * 1000;
+
+class HttpError extends Error {
+  statusCode: number;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+const badRequest = (message: string): HttpError => {
+  return new HttpError(400, message);
+};
+
+const unauthorized = (message: string): HttpError => {
+  return new HttpError(401, message);
+};
+
+const forbidden = (message: string): HttpError => {
+  return new HttpError(403, message);
+};
 
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
   response.statusCode = statusCode;
@@ -80,6 +139,473 @@ const readJsonBody = async <TPayload>(request: IncomingMessage): Promise<TPayloa
   }
 
   return JSON.parse(raw) as TPayload;
+};
+
+interface AuthenticatedRequestContext {
+  userId: string;
+  sessionId: string;
+  token: AuthTokenPayload;
+}
+
+const buildTokenCodec = (authOptions: BackendAuthOptions): AuthTokenCodecOptions => {
+  return {
+    secret: authOptions.tokenSecret,
+    issuer: authOptions.tokenIssuer,
+    audience: authOptions.tokenAudience,
+  };
+};
+
+const toSessionEnvelope = (
+  userId: string,
+  sessionId: string,
+  issued: ReturnType<typeof issueAuthTokenPair>
+): AuthSessionEnvelope => {
+  return {
+    sessionId,
+    userId,
+    tokens: {
+      tokenType: 'Bearer',
+      accessToken: issued.accessToken,
+      refreshToken: issued.refreshToken,
+      accessTokenExpiresAt: issued.accessTokenExpiresAt,
+      refreshTokenExpiresAt: issued.refreshTokenExpiresAt,
+    },
+  };
+};
+
+const extractBearerToken = (request: IncomingMessage): string | null => {
+  const authorizationHeader = request.headers.authorization;
+
+  if (!authorizationHeader) {
+    return null;
+  }
+
+  const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
+
+  if (!match || !match[1]) {
+    throw unauthorized('Authorization header must use Bearer token format.');
+  }
+
+  return match[1].trim();
+};
+
+const requireBearerToken = (request: IncomingMessage): string => {
+  const token = extractBearerToken(request);
+
+  if (!token) {
+    throw unauthorized('Authorization header is required.');
+  }
+
+  return token;
+};
+
+const parseAuthIdentityInput = (value: unknown): AuthIdentityInput => {
+  if (!value || typeof value !== 'object') {
+    throw badRequest('Auth session request body must be an object.');
+  }
+
+  const input = value as Record<string, unknown>;
+
+  if (typeof input.provider !== 'string' || input.provider.trim().length === 0) {
+    throw badRequest('Auth session request must include provider.');
+  }
+
+  if (typeof input.providerUserId !== 'string' || input.providerUserId.trim().length === 0) {
+    throw badRequest('Auth session request must include providerUserId.');
+  }
+
+  if (input.email !== undefined && input.email !== null && typeof input.email !== 'string') {
+    throw badRequest('email must be a string or null when provided.');
+  }
+
+  if (input.name !== undefined && input.name !== null && typeof input.name !== 'string') {
+    throw badRequest('name must be a string or null when provided.');
+  }
+
+  if (input.avatarUrl !== undefined && input.avatarUrl !== null && typeof input.avatarUrl !== 'string') {
+    throw badRequest('avatarUrl must be a string or null when provided.');
+  }
+
+  if (input.identityToken !== undefined && input.identityToken !== null && typeof input.identityToken !== 'string') {
+    throw badRequest('identityToken must be a string or null when provided.');
+  }
+
+  return {
+    provider: input.provider.trim().toLowerCase(),
+    providerUserId: input.providerUserId.trim(),
+    email: (input.email as string | null | undefined) ?? null,
+    name: (input.name as string | null | undefined) ?? null,
+    avatarUrl: (input.avatarUrl as string | null | undefined) ?? null,
+    identityToken: (input.identityToken as string | null | undefined) ?? null,
+  };
+};
+
+interface VerifiedAuthIdentity {
+  providerUserId: string;
+  email: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
+interface GoogleUserInfoResponse {
+  id?: unknown;
+  email?: unknown;
+  name?: unknown;
+  picture?: unknown;
+}
+
+interface ParsedJwtToken<TPayload extends object> {
+  header: Record<string, unknown>;
+  payload: TPayload;
+  signingInput: string;
+  signature: Buffer;
+}
+
+interface AppleIdentityTokenPayload {
+  iss?: unknown;
+  sub?: unknown;
+  exp?: unknown;
+  email?: unknown;
+}
+
+interface JsonWebKeySetResponse {
+  keys?: unknown;
+}
+
+let cachedAppleJwks: { keys: Array<Record<string, unknown>>; expiresAtMs: number } | null = null;
+
+const getRequiredIdentityToken = (identity: AuthIdentityInput): string => {
+  const identityToken = identity.identityToken?.trim() ?? '';
+
+  if (!identityToken) {
+    throw unauthorized('identityToken is required for auth session creation.');
+  }
+
+  return identityToken;
+};
+
+const isTimingSafeStringEqual = (left: string, right: string): boolean => {
+  const leftBuffer = Buffer.from(left, 'utf8');
+  const rightBuffer = Buffer.from(right, 'utf8');
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+const parseJwtJsonSegment = <TPayload extends object>(segment: string, segmentName: string): TPayload => {
+  try {
+    const json = Buffer.from(segment, 'base64url').toString('utf8');
+    return JSON.parse(json) as TPayload;
+  } catch {
+    throw unauthorized(`Identity token ${segmentName} segment is invalid.`);
+  }
+};
+
+const parseJwtToken = <TPayload extends object>(token: string): ParsedJwtToken<TPayload> => {
+  const segments = token.split('.');
+
+  if (segments.length !== 3) {
+    throw unauthorized('Identity token must use JWT format.');
+  }
+
+  const [headerSegment, payloadSegment, signatureSegment] = segments;
+
+  if (!headerSegment || !payloadSegment || !signatureSegment) {
+    throw unauthorized('Identity token JWT segments must be non-empty.');
+  }
+
+  return {
+    header: parseJwtJsonSegment<Record<string, unknown>>(headerSegment, 'header'),
+    payload: parseJwtJsonSegment<TPayload>(payloadSegment, 'payload'),
+    signingInput: `${headerSegment}.${payloadSegment}`,
+    signature: Buffer.from(signatureSegment, 'base64url'),
+  };
+};
+
+const parseCacheControlMaxAgeMilliseconds = (cacheControlHeader: string | null): number => {
+  if (!cacheControlHeader) {
+    return JWK_CACHE_FALLBACK_TTL_MILLISECONDS;
+  }
+
+  const maxAgeMatch = cacheControlHeader.match(/max-age=(\d+)/i);
+
+  if (!maxAgeMatch || !maxAgeMatch[1]) {
+    return JWK_CACHE_FALLBACK_TTL_MILLISECONDS;
+  }
+
+  const maxAgeSeconds = Number(maxAgeMatch[1]);
+
+  if (!Number.isFinite(maxAgeSeconds) || maxAgeSeconds <= 0) {
+    return JWK_CACHE_FALLBACK_TTL_MILLISECONDS;
+  }
+
+  return maxAgeSeconds * 1000;
+};
+
+const loadAppleJwks = async (): Promise<Array<Record<string, unknown>>> => {
+  const timestamp = Date.now();
+
+  if (cachedAppleJwks && cachedAppleJwks.expiresAtMs > timestamp) {
+    return cachedAppleJwks.keys;
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(APPLE_JWKS_URL);
+  } catch (error) {
+    throw unauthorized(`Unable to load Apple signing keys: ${(error as Error).message}`);
+  }
+
+  if (!response.ok) {
+    throw unauthorized(`Unable to load Apple signing keys: HTTP ${response.status}.`);
+  }
+
+  const payload = (await response.json()) as JsonWebKeySetResponse;
+
+  if (!Array.isArray(payload.keys)) {
+    throw unauthorized('Apple signing-key response is malformed.');
+  }
+
+  const keys = payload.keys.filter((entry): entry is Record<string, unknown> => {
+    return Boolean(entry) && typeof entry === 'object';
+  });
+
+  if (keys.length === 0) {
+    throw unauthorized('Apple signing-key response did not include usable keys.');
+  }
+
+  cachedAppleJwks = {
+    keys,
+    expiresAtMs: timestamp + parseCacheControlMaxAgeMilliseconds(response.headers.get('cache-control')),
+  };
+
+  return keys;
+};
+
+const verifyGoogleIdentity = async (identity: AuthIdentityInput): Promise<VerifiedAuthIdentity> => {
+  const identityToken = getRequiredIdentityToken(identity);
+
+  let response: Response;
+
+  try {
+    response = await fetch(GOOGLE_USER_INFO_URL, {
+      headers: {
+        Authorization: `Bearer ${identityToken}`,
+      },
+    });
+  } catch (error) {
+    throw unauthorized(`Unable to verify Google identity token: ${(error as Error).message}`);
+  }
+
+  if (!response.ok) {
+    throw unauthorized('Google identity token is invalid or expired.');
+  }
+
+  const userInfo = (await response.json()) as GoogleUserInfoResponse;
+
+  if (typeof userInfo.id !== 'string' || userInfo.id.trim().length === 0) {
+    throw unauthorized('Google identity token did not return a user id.');
+  }
+
+  const providerUserId = userInfo.id.trim();
+
+  if (providerUserId !== identity.providerUserId) {
+    throw unauthorized('Google identity token subject does not match providerUserId.');
+  }
+
+  return {
+    providerUserId,
+    email: typeof userInfo.email === 'string' ? userInfo.email : null,
+    name: typeof userInfo.name === 'string' ? userInfo.name : null,
+    avatarUrl: typeof userInfo.picture === 'string' ? userInfo.picture : null,
+  };
+};
+
+const verifyAppleIdentity = async (identity: AuthIdentityInput): Promise<VerifiedAuthIdentity> => {
+  const identityToken = getRequiredIdentityToken(identity);
+  const parsedToken = parseJwtToken<AppleIdentityTokenPayload>(identityToken);
+  const algorithm = typeof parsedToken.header.alg === 'string' ? parsedToken.header.alg : null;
+  const keyId = typeof parsedToken.header.kid === 'string' ? parsedToken.header.kid : null;
+
+  if (algorithm !== 'RS256' || !keyId) {
+    throw unauthorized('Apple identity token header is invalid.');
+  }
+
+  const issuer = typeof parsedToken.payload.iss === 'string' ? parsedToken.payload.iss : null;
+  const providerUserId = typeof parsedToken.payload.sub === 'string' ? parsedToken.payload.sub : null;
+  const expiresAt = typeof parsedToken.payload.exp === 'number' ? parsedToken.payload.exp : null;
+
+  if (issuer !== APPLE_TOKEN_ISSUER) {
+    throw unauthorized('Apple identity token issuer is invalid.');
+  }
+
+  if (!providerUserId) {
+    throw unauthorized('Apple identity token is missing subject.');
+  }
+
+  if (!expiresAt || expiresAt <= Math.floor(Date.now() / 1000)) {
+    throw unauthorized('Apple identity token is expired.');
+  }
+
+  if (providerUserId !== identity.providerUserId) {
+    throw unauthorized('Apple identity token subject does not match providerUserId.');
+  }
+
+  const keys = await loadAppleJwks();
+  const signingKey = keys.find((entry) => entry.kid === keyId);
+
+  if (!signingKey) {
+    throw unauthorized('Unable to find Apple signing key for token header kid.');
+  }
+
+  const verifier = createVerify('RSA-SHA256');
+  verifier.update(parsedToken.signingInput);
+  verifier.end();
+
+  const isSignatureValid = verifier.verify(
+    createPublicKey({
+      key: signingKey as CryptoJsonWebKey,
+      format: 'jwk',
+    }),
+    parsedToken.signature
+  );
+
+  if (!isSignatureValid) {
+    throw unauthorized('Apple identity token signature is invalid.');
+  }
+
+  return {
+    providerUserId,
+    email: typeof parsedToken.payload.email === 'string' ? parsedToken.payload.email : null,
+    name: identity.name ?? null,
+    avatarUrl: identity.avatarUrl ?? null,
+  };
+};
+
+const verifyTestIdentity = (identity: AuthIdentityInput, authOptions: BackendAuthOptions): VerifiedAuthIdentity => {
+  if (process.env.NODE_ENV === 'production') {
+    throw forbidden('test auth provider is disabled in production.');
+  }
+
+  const identityToken = getRequiredIdentityToken(identity);
+  const expectedToken = createHmac('sha256', authOptions.tokenSecret)
+    .update(`${identity.provider}:${identity.providerUserId}`)
+    .digest('hex');
+
+  if (!isTimingSafeStringEqual(identityToken, expectedToken)) {
+    throw unauthorized('Test identity token is invalid.');
+  }
+
+  return {
+    providerUserId: identity.providerUserId,
+    email: identity.email ?? null,
+    name: identity.name ?? null,
+    avatarUrl: identity.avatarUrl ?? null,
+  };
+};
+
+const verifyAuthIdentity = async (
+  identity: AuthIdentityInput,
+  authOptions: BackendAuthOptions
+): Promise<VerifiedAuthIdentity> => {
+  switch (identity.provider) {
+    case 'google':
+      return verifyGoogleIdentity(identity);
+    case 'apple':
+      return verifyAppleIdentity(identity);
+    case 'test':
+      return verifyTestIdentity(identity, authOptions);
+    default:
+      throw forbidden(`Unsupported auth provider: ${identity.provider}.`);
+  }
+};
+
+const parseRefreshAuthSessionRequest = (value: unknown): RefreshAuthSessionRequest => {
+  if (!value || typeof value !== 'object') {
+    throw badRequest('Refresh request body must be an object.');
+  }
+
+  const input = value as Record<string, unknown>;
+
+  if (typeof input.refreshToken !== 'string' || input.refreshToken.trim().length === 0) {
+    throw badRequest('Refresh request must include refreshToken.');
+  }
+
+  return {
+    refreshToken: input.refreshToken,
+  };
+};
+
+const parseRevokeAuthSessionRequest = (value: unknown): RevokeAuthSessionRequest => {
+  if (value === undefined || value === null) {
+    return {};
+  }
+
+  if (typeof value !== 'object') {
+    throw badRequest('Revoke request body must be an object when provided.');
+  }
+
+  const input = value as Record<string, unknown>;
+
+  if (input.refreshToken !== undefined && input.refreshToken !== null && typeof input.refreshToken !== 'string') {
+    throw badRequest('refreshToken must be a string when provided.');
+  }
+
+  return {
+    refreshToken: (input.refreshToken as string | undefined) ?? undefined,
+  };
+};
+
+const ensureRouteUserMatchesAuthenticatedUser = (routeUserId: string, authenticatedUserId: string): void => {
+  if (routeUserId !== authenticatedUserId) {
+    throw forbidden('Requested user does not match authenticated user.');
+  }
+};
+
+const requireAuthenticatedRequestContext = async (
+  request: IncomingMessage,
+  databasePath: string,
+  tokenCodec: AuthTokenCodecOptions
+): Promise<AuthenticatedRequestContext> => {
+  const accessToken = requireBearerToken(request);
+
+  let payload: AuthTokenPayload;
+
+  try {
+    payload = verifyAuthToken(accessToken, tokenCodec, { expectedType: 'access' });
+  } catch (error) {
+    throw unauthorized(`Invalid access token: ${(error as Error).message}`);
+  }
+
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const session = await getAuthSessionById(adapter, payload.sessionId);
+
+    if (!session) {
+      throw unauthorized('Auth session not found.');
+    }
+
+    if (session.userId !== payload.userId) {
+      throw unauthorized('Auth session user mismatch.');
+    }
+
+    if (!isAuthSessionActive(session)) {
+      throw unauthorized('Auth session has expired or is revoked.');
+    }
+  } finally {
+    await adapter.close();
+  }
+
+  return {
+    userId: payload.userId,
+    sessionId: payload.sessionId,
+    token: payload,
+  };
 };
 
 const parsePreferencePatch = (value: unknown): HexagonPreferencesPatch => {
@@ -349,6 +875,202 @@ const parseCollectionSyncOperation = (value: unknown, userId: string): Collectio
   };
 };
 
+const handleAuthSessionCreate = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  databasePath: string,
+  authOptions: BackendAuthOptions
+): Promise<void> => {
+  const payload = await readJsonBody<CreateAuthSessionRequest>(request);
+  const identityInput = parseAuthIdentityInput(payload);
+  const verifiedIdentity = await verifyAuthIdentity(identityInput, authOptions);
+
+  const identity: AuthIdentityInput = {
+    provider: identityInput.provider,
+    providerUserId: verifiedIdentity.providerUserId,
+    email: verifiedIdentity.email ?? identityInput.email ?? null,
+    name: verifiedIdentity.name ?? identityInput.name ?? null,
+    avatarUrl: verifiedIdentity.avatarUrl ?? identityInput.avatarUrl ?? null,
+    identityToken: null,
+  };
+
+  const tokenCodec = buildTokenCodec(authOptions);
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const sessionId = createUuid();
+    let userId = identity.providerUserId;
+    let userProfile: Awaited<ReturnType<typeof upsertAuthUser>> | null = null;
+    let issuedTokens: ReturnType<typeof issueAuthTokenPair> | null = null;
+
+    await adapter.transaction(async (tx) => {
+      userProfile = await upsertAuthUser(tx, identity);
+      userId = userProfile.id;
+
+      issuedTokens = issueAuthTokenPair(
+        {
+          userId,
+          sessionId,
+          accessTokenTtlSeconds: authOptions.accessTokenTtlSeconds,
+          refreshTokenTtlSeconds: authOptions.refreshTokenTtlSeconds,
+        },
+        tokenCodec
+      );
+
+      await createAuthSession(tx, {
+        sessionId,
+        userId,
+        refreshTokenHash: hashAuthToken(issuedTokens.refreshToken),
+        refreshExpiresAt: issuedTokens.refreshTokenExpiresAt,
+      });
+    });
+
+    if (!userProfile || !issuedTokens) {
+      throw new Error(`Failed to create auth session for ${identity.providerUserId}.`);
+    }
+
+    writeJson(response, 200, {
+      user: userProfile,
+      session: toSessionEnvelope(userId, sessionId, issuedTokens),
+    });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleAuthSessionRefresh = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  databasePath: string,
+  authOptions: BackendAuthOptions
+): Promise<void> => {
+  const payload = await readJsonBody<RefreshAuthSessionRequest>(request);
+  const input = parseRefreshAuthSessionRequest(payload);
+  const tokenCodec = buildTokenCodec(authOptions);
+
+  let refreshTokenPayload: AuthTokenPayload;
+
+  try {
+    refreshTokenPayload = verifyAuthToken(input.refreshToken, tokenCodec, { expectedType: 'refresh' });
+  } catch (error) {
+    throw unauthorized(`Invalid refresh token: ${(error as Error).message}`);
+  }
+
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const session = await getAuthSessionById(adapter, refreshTokenPayload.sessionId);
+
+    if (!session) {
+      throw unauthorized('Auth session not found.');
+    }
+
+    if (session.userId !== refreshTokenPayload.userId) {
+      throw unauthorized('Auth session user mismatch.');
+    }
+
+    if (!isAuthSessionActive(session)) {
+      throw unauthorized('Auth session has expired or is revoked.');
+    }
+
+    const previousRefreshTokenHash = hashAuthToken(input.refreshToken);
+
+    if (session.refreshTokenHash !== previousRefreshTokenHash) {
+      throw unauthorized('Refresh token has been rotated or revoked.');
+    }
+
+    const issuedTokens = issueAuthTokenPair(
+      {
+        userId: session.userId,
+        sessionId: session.sessionId,
+        accessTokenTtlSeconds: authOptions.accessTokenTtlSeconds,
+        refreshTokenTtlSeconds: authOptions.refreshTokenTtlSeconds,
+      },
+      tokenCodec
+    );
+
+    const rotated = await rotateAuthSession(adapter, {
+      sessionId: session.sessionId,
+      previousRefreshTokenHash,
+      refreshTokenHash: hashAuthToken(issuedTokens.refreshToken),
+      refreshExpiresAt: issuedTokens.refreshTokenExpiresAt,
+    });
+
+    if (!rotated) {
+      throw unauthorized('Refresh token has been rotated or revoked.');
+    }
+
+    writeJson(response, 200, {
+      session: toSessionEnvelope(session.userId, session.sessionId, issuedTokens),
+    });
+  } finally {
+    await adapter.close();
+  }
+};
+
+const handleAuthSessionRevoke = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  databasePath: string,
+  authOptions: BackendAuthOptions
+): Promise<void> => {
+  const payload = await readJsonBody<RevokeAuthSessionRequest>(request);
+  const input = parseRevokeAuthSessionRequest(payload);
+  const tokenCodec = buildTokenCodec(authOptions);
+
+  let tokenPayload: AuthTokenPayload | null = null;
+
+  if (input.refreshToken) {
+    try {
+      tokenPayload = verifyAuthToken(input.refreshToken, tokenCodec, {
+        expectedType: 'refresh',
+        allowExpired: true,
+      });
+    } catch (error) {
+      throw unauthorized(`Invalid refresh token: ${(error as Error).message}`);
+    }
+  } else {
+    const bearerToken = extractBearerToken(request);
+
+    if (!bearerToken) {
+      throw badRequest('Revoke request requires refreshToken or Authorization header.');
+    }
+
+    try {
+      tokenPayload = verifyAuthToken(bearerToken, tokenCodec, {
+        expectedType: 'access',
+        allowExpired: true,
+      });
+    } catch (error) {
+      throw unauthorized(`Invalid access token: ${(error as Error).message}`);
+    }
+  }
+
+  if (!tokenPayload) {
+    throw badRequest('Unable to resolve revoke token payload.');
+  }
+
+  const adapter = createNodeSqliteAdapter({ filename: databasePath });
+
+  try {
+    const session = await getAuthSessionById(adapter, tokenPayload.sessionId);
+
+    if (!session) {
+      writeJson(response, 200, { revoked: false });
+      return;
+    }
+
+    if (session.userId !== tokenPayload.userId) {
+      throw unauthorized('Auth session user mismatch.');
+    }
+
+    await revokeAuthSession(adapter, tokenPayload.sessionId);
+    writeJson(response, 200, { revoked: true });
+  } finally {
+    await adapter.close();
+  }
+};
+
 const extractPreferenceUserId = (pathname: string): string | null => {
   const match = pathname.match(/^\/users\/([^/]+)\/preferences$/);
 
@@ -414,11 +1136,16 @@ const handlePreferencePut = async (
   }
 };
 
-const handleSyncPush = async (request: IncomingMessage, response: ServerResponse, databasePath: string): Promise<void> => {
+const handleSyncPush = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  databasePath: string,
+  authenticatedUserId: string
+): Promise<void> => {
   const payload = await readJsonBody<{ userId?: unknown; operations?: unknown }>(request);
 
-  if (typeof payload.userId !== 'string') {
-    throw new Error('Push payload must include userId.');
+  if (payload.userId !== undefined && payload.userId !== authenticatedUserId) {
+    throw forbidden('Push payload userId does not match authenticated user.');
   }
 
   if (!Array.isArray(payload.operations)) {
@@ -428,8 +1155,8 @@ const handleSyncPush = async (request: IncomingMessage, response: ServerResponse
   const operations = payload.operations.map((operation) => parsePreferenceSyncOperation(operation));
 
   for (const operation of operations) {
-    if (operation.userId !== payload.userId) {
-      throw new Error('All operation userId values must match payload userId.');
+    if (operation.userId !== authenticatedUserId) {
+      throw forbidden('All operation userId values must match authenticated user.');
     }
   }
 
@@ -467,12 +1194,19 @@ const handleSyncPush = async (request: IncomingMessage, response: ServerResponse
   }
 };
 
-const handleSyncPull = async (url: URL, response: ServerResponse, databasePath: string): Promise<void> => {
-  const userId = url.searchParams.get('userId');
+const handleSyncPull = async (
+  url: URL,
+  response: ServerResponse,
+  databasePath: string,
+  authenticatedUserId: string
+): Promise<void> => {
+  const requestedUserId = url.searchParams.get('userId');
 
-  if (!userId) {
-    throw new Error('Pull query requires userId.');
+  if (requestedUserId && requestedUserId !== authenticatedUserId) {
+    throw forbidden('Pull query userId does not match authenticated user.');
   }
+
+  const userId = authenticatedUserId;
 
   const cursor = url.searchParams.get('cursor');
   const adapter = createNodeSqliteAdapter({ filename: databasePath });
@@ -512,19 +1246,20 @@ interface PlaceSyncSnapshotRow {
 const handlePlaceSyncPush = async (
   request: IncomingMessage,
   response: ServerResponse,
-  databasePath: string
+  databasePath: string,
+  authenticatedUserId: string
 ): Promise<void> => {
   const payload = await readJsonBody<{ userId?: unknown; operations?: unknown }>(request);
 
-  if (typeof payload.userId !== 'string') {
-    throw new Error('Push payload must include userId.');
+  if (payload.userId !== undefined && payload.userId !== authenticatedUserId) {
+    throw forbidden('Push payload userId does not match authenticated user.');
   }
 
   if (!Array.isArray(payload.operations)) {
     throw new Error('Push payload must include operations array.');
   }
 
-  const operations = payload.operations.map((operation) => parsePlaceSyncOperation(operation, payload.userId as string));
+  const operations = payload.operations.map((operation) => parsePlaceSyncOperation(operation, authenticatedUserId));
   const adapter = createNodeSqliteAdapter({ filename: databasePath });
 
   try {
@@ -565,12 +1300,19 @@ const handlePlaceSyncPush = async (
   }
 };
 
-const handlePlaceSyncPull = async (url: URL, response: ServerResponse, databasePath: string): Promise<void> => {
-  const userId = url.searchParams.get('userId');
+const handlePlaceSyncPull = async (
+  url: URL,
+  response: ServerResponse,
+  databasePath: string,
+  authenticatedUserId: string
+): Promise<void> => {
+  const requestedUserId = url.searchParams.get('userId');
 
-  if (!userId) {
-    throw new Error('Pull query requires userId.');
+  if (requestedUserId && requestedUserId !== authenticatedUserId) {
+    throw forbidden('Pull query userId does not match authenticated user.');
   }
+
+  const userId = authenticatedUserId;
 
   const adapter = createNodeSqliteAdapter({ filename: databasePath });
 
@@ -650,19 +1392,20 @@ interface CollectionSyncPlaceRow {
 const handleCollectionSyncPush = async (
   request: IncomingMessage,
   response: ServerResponse,
-  databasePath: string
+  databasePath: string,
+  authenticatedUserId: string
 ): Promise<void> => {
   const payload = await readJsonBody<{ userId?: unknown; operations?: unknown }>(request);
 
-  if (typeof payload.userId !== 'string') {
-    throw new Error('Push payload must include userId.');
+  if (payload.userId !== undefined && payload.userId !== authenticatedUserId) {
+    throw forbidden('Push payload userId does not match authenticated user.');
   }
 
   if (!Array.isArray(payload.operations)) {
     throw new Error('Push payload must include operations array.');
   }
 
-  const operations = payload.operations.map((operation) => parseCollectionSyncOperation(operation, payload.userId as string));
+  const operations = payload.operations.map((operation) => parseCollectionSyncOperation(operation, authenticatedUserId));
   const adapter = createNodeSqliteAdapter({ filename: databasePath });
 
   try {
@@ -703,12 +1446,19 @@ const handleCollectionSyncPush = async (
   }
 };
 
-const handleCollectionSyncPull = async (url: URL, response: ServerResponse, databasePath: string): Promise<void> => {
-  const userId = url.searchParams.get('userId');
+const handleCollectionSyncPull = async (
+  url: URL,
+  response: ServerResponse,
+  databasePath: string,
+  authenticatedUserId: string
+): Promise<void> => {
+  const requestedUserId = url.searchParams.get('userId');
 
-  if (!userId) {
-    throw new Error('Pull query requires userId.');
+  if (requestedUserId && requestedUserId !== authenticatedUserId) {
+    throw forbidden('Pull query userId does not match authenticated user.');
   }
+
+  const userId = authenticatedUserId;
 
   const adapter = createNodeSqliteAdapter({ filename: databasePath });
 
@@ -1170,7 +1920,8 @@ const handleCollectionListPlaces = async (
 const handleRequest = async (
   request: IncomingMessage,
   response: ServerResponse,
-  options: BackendServerOptions
+  options: BackendServerOptions,
+  authOptions: BackendAuthOptions
 ): Promise<void> => {
   if (!request.url) {
     writeJson(response, 400, { error: 'Missing request URL.' });
@@ -1178,6 +1929,7 @@ const handleRequest = async (
   }
 
   const url = new URL(request.url, `http://${options.host}:${options.port}`);
+  const tokenCodec = buildTokenCodec(authOptions);
 
   try {
     if (request.method === 'GET' && url.pathname === '/health') {
@@ -1204,45 +1956,64 @@ const handleRequest = async (
       return;
     }
 
+    if (request.method === 'POST' && url.pathname === '/auth/session') {
+      await handleAuthSessionCreate(request, response, options.databasePath, authOptions);
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/auth/refresh') {
+      await handleAuthSessionRefresh(request, response, options.databasePath, authOptions);
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/auth/revoke') {
+      await handleAuthSessionRevoke(request, response, options.databasePath, authOptions);
+      return;
+    }
+
+    const authContext = await requireAuthenticatedRequestContext(request, options.databasePath, tokenCodec);
+
     const preferenceUserId = extractPreferenceUserId(url.pathname);
 
     if (preferenceUserId && request.method === 'GET') {
-      await handlePreferenceGet(response, preferenceUserId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(preferenceUserId, authContext.userId);
+      await handlePreferenceGet(response, authContext.userId, options.databasePath);
       return;
     }
 
     if (preferenceUserId && request.method === 'PUT') {
-      await handlePreferencePut(request, response, preferenceUserId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(preferenceUserId, authContext.userId);
+      await handlePreferencePut(request, response, authContext.userId, options.databasePath);
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/sync/preferences/push') {
-      await handleSyncPush(request, response, options.databasePath);
+      await handleSyncPush(request, response, options.databasePath, authContext.userId);
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/sync/preferences/pull') {
-      await handleSyncPull(url, response, options.databasePath);
+      await handleSyncPull(url, response, options.databasePath, authContext.userId);
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/sync/places/push') {
-      await handlePlaceSyncPush(request, response, options.databasePath);
+      await handlePlaceSyncPush(request, response, options.databasePath, authContext.userId);
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/sync/places/pull') {
-      await handlePlaceSyncPull(url, response, options.databasePath);
+      await handlePlaceSyncPull(url, response, options.databasePath, authContext.userId);
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/sync/collections/push') {
-      await handleCollectionSyncPush(request, response, options.databasePath);
+      await handleCollectionSyncPush(request, response, options.databasePath, authContext.userId);
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/sync/collections/pull') {
-      await handleCollectionSyncPull(url, response, options.databasePath);
+      await handleCollectionSyncPull(url, response, options.databasePath, authContext.userId);
       return;
     }
 
@@ -1251,26 +2022,30 @@ const handleRequest = async (
     const upsertGoogleUserId = extractUpsertGoogleUserId(url.pathname);
 
     if (upsertGoogleUserId && request.method === 'PUT') {
-      await handlePlaceUpsertGoogle(request, response, upsertGoogleUserId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(upsertGoogleUserId, authContext.userId);
+      await handlePlaceUpsertGoogle(request, response, authContext.userId, options.databasePath);
       return;
     }
 
     const placeIds = extractPlaceIds(url.pathname);
 
     if (placeIds && request.method === 'GET') {
-      await handlePlaceGet(response, placeIds.userId, placeIds.placeId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(placeIds.userId, authContext.userId);
+      await handlePlaceGet(response, authContext.userId, placeIds.placeId, options.databasePath);
       return;
     }
 
     if (placeIds && request.method === 'DELETE') {
-      await handlePlaceDelete(response, placeIds.userId, placeIds.placeId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(placeIds.userId, authContext.userId);
+      await handlePlaceDelete(response, authContext.userId, placeIds.placeId, options.databasePath);
       return;
     }
 
     const placeListUserId = extractPlaceListUserId(url.pathname);
 
     if (placeListUserId && request.method === 'GET') {
-      await handlePlaceList(response, placeListUserId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(placeListUserId, authContext.userId);
+      await handlePlaceList(response, authContext.userId, options.databasePath);
       return;
     }
 
@@ -1280,9 +2055,10 @@ const handleRequest = async (
     const collectionPlaceIds = extractCollectionPlaceIds(url.pathname);
 
     if (collectionPlaceIds && request.method === 'DELETE') {
+      ensureRouteUserMatchesAuthenticatedUser(collectionPlaceIds.userId, authContext.userId);
       await handleCollectionRemovePlace(
         response,
-        collectionPlaceIds.userId,
+        authContext.userId,
         collectionPlaceIds.collectionId,
         collectionPlaceIds.placeId,
         options.databasePath
@@ -1293,48 +2069,114 @@ const handleRequest = async (
     const collectionPlacesPath = extractCollectionPlacesPath(url.pathname);
 
     if (collectionPlacesPath && request.method === 'POST') {
-      await handleCollectionAddPlace(request, response, collectionPlacesPath.userId, collectionPlacesPath.collectionId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(collectionPlacesPath.userId, authContext.userId);
+      await handleCollectionAddPlace(request, response, authContext.userId, collectionPlacesPath.collectionId, options.databasePath);
       return;
     }
 
     if (collectionPlacesPath && request.method === 'GET') {
-      await handleCollectionListPlaces(response, collectionPlacesPath.userId, collectionPlacesPath.collectionId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(collectionPlacesPath.userId, authContext.userId);
+      await handleCollectionListPlaces(response, authContext.userId, collectionPlacesPath.collectionId, options.databasePath);
       return;
     }
 
     const collectionIds = extractCollectionIds(url.pathname);
 
     if (collectionIds && request.method === 'GET') {
-      await handleCollectionGet(response, collectionIds.userId, collectionIds.collectionId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(collectionIds.userId, authContext.userId);
+      await handleCollectionGet(response, authContext.userId, collectionIds.collectionId, options.databasePath);
       return;
     }
 
     if (collectionIds && request.method === 'PUT') {
-      await handleCollectionUpdate(request, response, collectionIds.userId, collectionIds.collectionId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(collectionIds.userId, authContext.userId);
+      await handleCollectionUpdate(request, response, authContext.userId, collectionIds.collectionId, options.databasePath);
       return;
     }
 
     if (collectionIds && request.method === 'DELETE') {
-      await handleCollectionDelete(response, collectionIds.userId, collectionIds.collectionId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(collectionIds.userId, authContext.userId);
+      await handleCollectionDelete(response, authContext.userId, collectionIds.collectionId, options.databasePath);
       return;
     }
 
     const collectionListUserId = extractCollectionListUserId(url.pathname);
 
     if (collectionListUserId && request.method === 'POST') {
-      await handleCollectionCreate(request, response, collectionListUserId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(collectionListUserId, authContext.userId);
+      await handleCollectionCreate(request, response, authContext.userId, options.databasePath);
       return;
     }
 
     if (collectionListUserId && request.method === 'GET') {
-      await handleCollectionList(response, collectionListUserId, options.databasePath);
+      ensureRouteUserMatchesAuthenticatedUser(collectionListUserId, authContext.userId);
+      await handleCollectionList(response, authContext.userId, options.databasePath);
       return;
     }
 
     writeJson(response, 404, { error: 'Not found.' });
   } catch (error) {
+    if (error instanceof HttpError) {
+      writeJson(response, error.statusCode, { error: error.message });
+      return;
+    }
+
     writeJson(response, 400, { error: (error as Error).message });
   }
+};
+
+const parsePositiveInteger = (value: unknown, fallback: number, fieldName: string): number => {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${fieldName} must be a positive integer.`);
+  }
+
+  return parsed;
+};
+
+const resolveTokenSecret = (input: Partial<BackendAuthOptions> | undefined): string => {
+  const configuredSecret = input?.tokenSecret ?? process.env.BOOKMARKS_AUTH_TOKEN_SECRET;
+
+  if (configuredSecret && configuredSecret.trim().length > 0) {
+    return configuredSecret;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('BOOKMARKS_AUTH_TOKEN_SECRET must be configured in production.');
+  }
+
+  if (process.env.NODE_ENV !== 'test') {
+    console.warn('BOOKMARKS_AUTH_TOKEN_SECRET is not set; generated an ephemeral auth token secret for this backend process.');
+  }
+
+  return randomBytes(32).toString('hex');
+};
+
+const resolveBackendAuthOptions = (input: Partial<BackendAuthOptions> | undefined): BackendAuthOptions => {
+  return {
+    tokenSecret: resolveTokenSecret(input),
+    tokenIssuer: input?.tokenIssuer
+      ?? process.env.BOOKMARKS_AUTH_TOKEN_ISSUER
+      ?? DEFAULT_AUTH_TOKEN_ISSUER,
+    tokenAudience: input?.tokenAudience
+      ?? process.env.BOOKMARKS_AUTH_TOKEN_AUDIENCE
+      ?? DEFAULT_AUTH_TOKEN_AUDIENCE,
+    accessTokenTtlSeconds: parsePositiveInteger(
+      input?.accessTokenTtlSeconds ?? process.env.BOOKMARKS_AUTH_ACCESS_TTL_SECONDS,
+      DEFAULT_ACCESS_TOKEN_TTL_SECONDS,
+      'accessTokenTtlSeconds'
+    ),
+    refreshTokenTtlSeconds: parsePositiveInteger(
+      input?.refreshTokenTtlSeconds ?? process.env.BOOKMARKS_AUTH_REFRESH_TTL_SECONDS,
+      DEFAULT_REFRESH_TOKEN_TTL_SECONDS,
+      'refreshTokenTtlSeconds'
+    ),
+  };
 };
 
 /**
@@ -1344,6 +2186,7 @@ const handleRequest = async (
  */
 export const createBackendServer = async (options: BackendServerOptions): Promise<BackendServer> => {
   mkdirSync(dirname(options.databasePath), { recursive: true });
+  const authOptions = resolveBackendAuthOptions(options.auth);
 
   const migrationAdapter = createNodeSqliteAdapter({ filename: options.databasePath });
 
@@ -1354,7 +2197,7 @@ export const createBackendServer = async (options: BackendServerOptions): Promis
   }
 
   const server = createServer((request, response) => {
-    handleRequest(request, response, options).catch((error) => {
+    handleRequest(request, response, options, authOptions).catch((error) => {
       console.error('Unhandled backend request error:', error);
       writeJson(response, 500, { error: 'Internal server error.' });
     });

@@ -82,3 +82,14 @@ export interface SyncStateRow {
   last_synced_operation_id: string | null;
   updated_at: string;
 }
+
+export interface AuthSessionRow {
+  id: string;
+  user_id: string;
+  refresh_token_hash: string;
+  refresh_expires_at: string;
+  created_at: string;
+  updated_at: string;
+  last_refreshed_at: string;
+  revoked_at: string | null;
+}

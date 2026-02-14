@@ -10,6 +10,7 @@
     "share/**/*.ts",
     "sync/**/*.ts",
     "http/**/*.ts",
+    "auth/**/*.ts",
     "apps/backend/**/*.ts",
     "apps/cli/**/*.ts",
     "tests/**/*.ts"

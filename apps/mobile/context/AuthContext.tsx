@@ -7,7 +7,15 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import * as Google from 'expo-auth-session/providers/google';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as WebBrowser from 'expo-web-browser';
+import { createAuthHttpClient } from '../../../auth/src/httpClient';
+import { BOOKMARKS_BACKEND_URL } from '../config/backend';
+import {
+  clearAuthSession,
+  loadAuthSession,
+  saveAuthSessionEnvelope,
+} from '../data/authSession';
 import { wipeLocalDataOnSignOut } from '../data/localPersistence';
+import { syncAuthenticatedData } from '../data/syncManager';
 import {
   loadStoredUser as loadStoredUserFromDb,
   migrateGuestDataToUser,
@@ -45,19 +53,33 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     webClientId: 'YOUR_WEB_CLIENT_ID.apps.googleusercontent.com',
   });
 
+  const authClient = createAuthHttpClient({ baseUrl: BOOKMARKS_BACKEND_URL });
+
   useEffect(() => {
     const bootstrapUser = async () => {
       try {
-        const storedUser = await loadStoredUserFromDb();
+        const [storedUser, storedSession] = await Promise.all([
+          loadStoredUserFromDb(),
+          loadAuthSession(),
+        ]);
 
         if (storedUser) {
+          if (storedSession && storedSession.userId !== storedUser.id) {
+            await clearAuthSession();
+          }
+
           setActiveUserId(storedUser.id);
           setUser(storedUser);
+          void syncAuthenticatedData().catch((error) => {
+            console.error('Error running initial authenticated sync:', error);
+          });
         } else {
+          await clearAuthSession();
           resetActiveUserId();
         }
       } catch (error) {
         console.error('Error loading user:', error);
+        await clearAuthSession();
         resetActiveUserId();
       } finally {
         setIsLoading(false);
@@ -82,14 +104,45 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     void fetchGoogleUserInfo(accessToken);
   }, [response]);
 
-  const saveUser = async (userData: AuthenticatedUser): Promise<void> => {
+  const exchangeBackendSession = async (
+    userData: AuthenticatedUser,
+    identityToken: string
+  ): Promise<AuthenticatedUser> => {
+    const sessionResponse = await authClient.createSession({
+      provider: userData.provider,
+      providerUserId: userData.id,
+      email: userData.email,
+      name: userData.name,
+      avatarUrl: userData.picture,
+      identityToken,
+    });
+
+    await saveAuthSessionEnvelope(sessionResponse.session);
+
+    return {
+      id: sessionResponse.user.id,
+      email: sessionResponse.user.email,
+      name: sessionResponse.user.name ?? userData.name,
+      picture: sessionResponse.user.avatarUrl ?? userData.picture,
+      provider: sessionResponse.user.provider === 'apple' ? 'apple' : 'google',
+    };
+  };
+
+  const saveUser = async (userData: AuthenticatedUser, identityToken: string): Promise<void> => {
     try {
-      await persistUser(userData);
-      await migrateGuestDataToUser(userData.id);
-      setActiveUserId(userData.id);
-      setUser(userData);
+      const authenticatedUser = await exchangeBackendSession(userData, identityToken);
+
+      await persistUser(authenticatedUser);
+      await migrateGuestDataToUser(authenticatedUser.id);
+      setActiveUserId(authenticatedUser.id);
+      setUser(authenticatedUser);
+
+      void syncAuthenticatedData().catch((error) => {
+        console.error('Error running post-login sync:', error);
+      });
     } catch (error) {
       console.error('Error saving user:', error);
+      await clearAuthSession();
       throw error;
     }
   };
@@ -118,7 +171,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         provider: 'google',
       };
 
-      await saveUser(userData);
+      await saveUser(userData, accessToken);
     } catch (error) {
       console.error('Error fetching Google user info:', error);
     }
@@ -146,6 +199,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const familyName = credential.fullName?.familyName ?? '';
       const fallbackName = `${givenName} ${familyName}`.trim() || 'Apple User';
 
+      const identityToken = credential.identityToken;
+
+      if (!identityToken) {
+        throw new Error('Apple sign in succeeded but no identity token was returned.');
+      }
+
       const userData: AuthenticatedUser = {
         id: credential.user,
         email: credential.email ?? null,
@@ -154,7 +213,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         provider: 'apple',
       };
 
-      await saveUser(userData);
+      await saveUser(userData, identityToken);
     } catch (error) {
       const maybeCode = (error as { code?: string }).code;
 
@@ -170,7 +229,18 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const signOut = async (): Promise<void> => {
     try {
+      const session = await loadAuthSession();
+
+      if (session) {
+        try {
+          await authClient.revokeSession({ refreshToken: session.refreshToken });
+        } catch (error) {
+          console.warn('Unable to revoke backend auth session during sign out:', error);
+        }
+      }
+
       await wipeLocalDataOnSignOut(undefined, { wipeDatabase: true });
+      await clearAuthSession();
       resetActiveUserId();
       setUser(null);
     } catch (error) {

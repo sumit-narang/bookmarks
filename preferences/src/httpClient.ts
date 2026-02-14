@@ -3,7 +3,7 @@
  */
 
 import type { HttpClientOptions } from '../../http/src';
-import { buildPullQuery, readJsonResponse, trimTrailingSlash } from '../../http/src';
+import { buildPullQuery, createHttpRequest, readJsonResponse } from '../../http/src';
 import type {
   HexagonPreferences,
   HexagonPreferencesPatch,
@@ -31,17 +31,16 @@ export type PreferencesHttpClientOptions = HttpClientOptions;
  * @returns {PreferencesHttpClient}
  */
 export const createPreferencesHttpClient = (options: PreferencesHttpClientOptions): PreferencesHttpClient => {
-  const baseUrl = trimTrailingSlash(options.baseUrl);
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const request = createHttpRequest(options);
 
   return {
     async getPreferences(userId) {
-      const response = await fetchImpl(`${baseUrl}/users/${encodeURIComponent(userId)}/preferences`);
+      const response = await request(`/users/${encodeURIComponent(userId)}/preferences`);
       const payload = await readJsonResponse<{ preferences: HexagonPreferences }>(response);
       return payload.preferences;
     },
     async setPreferences(userId, patch, payloadOptions = {}) {
-      const response = await fetchImpl(`${baseUrl}/users/${encodeURIComponent(userId)}/preferences`, {
+      const response = await request(`/users/${encodeURIComponent(userId)}/preferences`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -57,7 +56,7 @@ export const createPreferencesHttpClient = (options: PreferencesHttpClientOption
       return payload.preferences;
     },
     async pushPreferenceOperations(userId, operations) {
-      const response = await fetchImpl(`${baseUrl}/sync/preferences/push`, {
+      const response = await request('/sync/preferences/push', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -72,7 +71,7 @@ export const createPreferencesHttpClient = (options: PreferencesHttpClientOption
     },
     async pullPreferences(userId, cursor) {
       const query = buildPullQuery(userId, cursor);
-      const response = await fetchImpl(`${baseUrl}/sync/preferences/pull?${query.toString()}`);
+      const response = await request(`/sync/preferences/pull?${query.toString()}`);
       return readJsonResponse<PreferenceSyncPullResponse>(response);
     },
   };

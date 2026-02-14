@@ -18,6 +18,7 @@ const cliEntrypoint = resolve(repositoryRoot, 'apps', 'cli', 'src', 'index.ts');
 const backendEntrypoint = resolve(repositoryRoot, 'apps', 'backend', 'src', 'index.ts');
 
 const expectedTables = [
+  'auth_sessions',
   'collection_places',
   'collections',
   'outbox',
@@ -188,7 +189,7 @@ test('CLI smoke: db:reset + db:inspect produce expected schema summary', async (
     const summary = parseSummaryJson(inspectOutput.stdout);
 
     for (const tableName of expectedTables) {
-      const expectedCount = tableName === 'schema_migrations' ? 2 : 0;
+      const expectedCount = tableName === 'schema_migrations' ? 3 : 0;
       assert.equal(summary[tableName], expectedCount);
     }
 

@@ -11,7 +11,7 @@ import type {
   SyncRemote,
 } from '../../sync/src';
 import type { HttpClientOptions } from './transport';
-import { buildPullQuery, readJsonResponse, trimTrailingSlash } from './transport';
+import { buildPullQuery, createHttpRequest, readJsonResponse } from './transport';
 
 export interface SyncRemoteClientOptions extends HttpClientOptions {
   /** The entity type this client handles (e.g. 'places', 'collections'). */
@@ -29,8 +29,7 @@ export interface SyncRemoteClientOptions extends HttpClientOptions {
  * @returns {SyncRemote}
  */
 export const createSyncRemoteClient = (options: SyncRemoteClientOptions): SyncRemote => {
-  const baseUrl = trimTrailingSlash(options.baseUrl);
-  const fetchFn = options.fetchImpl ?? fetch;
+  const request = createHttpRequest(options);
   const { entityType, routePrefix } = options;
 
   return {
@@ -41,7 +40,7 @@ export const createSyncRemoteClient = (options: SyncRemoteClientOptions): SyncRe
         );
       }
 
-      const response = await fetchFn(`${baseUrl}/sync/${routePrefix}/push`, {
+      const response = await request(`/sync/${routePrefix}/push`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, operations }),
@@ -58,7 +57,7 @@ export const createSyncRemoteClient = (options: SyncRemoteClientOptions): SyncRe
       }
 
       const query = buildPullQuery(userId, cursor);
-      const response = await fetchFn(`${baseUrl}/sync/${routePrefix}/pull?${query.toString()}`);
+      const response = await request(`/sync/${routePrefix}/pull?${query.toString()}`);
       return readJsonResponse<SyncPullResponse>(response);
     },
   };

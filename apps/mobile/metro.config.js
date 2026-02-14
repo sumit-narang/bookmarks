@@ -13,6 +13,7 @@ const sharedModuleRoots = [
   'share',
   'sync',
   'http',
+  'auth',
 ].map((directory) => path.resolve(workspaceRoot, directory));
 
 const config = getDefaultConfig(projectRoot);
