@@ -29,6 +29,8 @@ const ProfileScreen = ({ navigation }) => {
   const {
     isAuthenticated,
     isE2eMode,
+    isTestAuthEnabled,
+    defaultTestUserId,
     signInWithGoogle,
     signInWithApple,
     signInWithTestUser,
@@ -65,12 +67,12 @@ const ProfileScreen = ({ navigation }) => {
     }
   };
 
-  // Handle E2E test-user sign in
-  const handleE2eSignIn = async (userId) => {
+  // Handle test-user sign in
+  const handleTestUserSignIn = async (userId) => {
     try {
       await signInWithTestUser(userId);
     } catch (error) {
-      Alert.alert('Error', 'Failed to sign in with e2e test user.');
+      Alert.alert('Error', 'Failed to sign in with test user.');
     }
   };
 
@@ -236,35 +238,49 @@ const ProfileScreen = ({ navigation }) => {
             )}
           </View>
 
-          {isE2eMode && (
+          {isTestAuthEnabled && (
             <View style={styles.authButtonContainer}>
-              <TouchableOpacity
-                style={styles.authButton}
-                onPress={() => handleE2eSignIn(e2ePrimaryUserId)}
-                activeOpacity={0.7}
-                testID="profile-e2e-signin-user-a"
-              >
-                <Ionicons name="flask-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.authButtonText}>Continue as E2E User A</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.authButton}
-                onPress={() => handleE2eSignIn(e2eSecondaryUserId)}
-                activeOpacity={0.7}
-                testID="profile-e2e-signin-user-b"
-              >
-                <Ionicons name="flask-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.authButtonText}>Continue as E2E User B</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.devToolButton}
-                onPress={handleDiagnosticsPress}
-                activeOpacity={0.7}
-                testID="profile-diagnostics-button"
-              >
-                <Ionicons name="bug-outline" size={18} color="#888" />
-                <Text style={styles.devToolText}>Diagnostics</Text>
-              </TouchableOpacity>
+              {isE2eMode ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.authButton}
+                    onPress={() => handleTestUserSignIn(e2ePrimaryUserId)}
+                    activeOpacity={0.7}
+                    testID="profile-e2e-signin-user-a"
+                  >
+                    <Ionicons name="flask-outline" size={20} color="#FFFFFF" />
+                    <Text style={styles.authButtonText}>Continue as E2E User A</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.authButton}
+                    onPress={() => handleTestUserSignIn(e2eSecondaryUserId)}
+                    activeOpacity={0.7}
+                    testID="profile-e2e-signin-user-b"
+                  >
+                    <Ionicons name="flask-outline" size={20} color="#FFFFFF" />
+                    <Text style={styles.authButtonText}>Continue as E2E User B</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.devToolButton}
+                    onPress={handleDiagnosticsPress}
+                    activeOpacity={0.7}
+                    testID="profile-diagnostics-button"
+                  >
+                    <Ionicons name="bug-outline" size={18} color="#888" />
+                    <Text style={styles.devToolText}>Diagnostics</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  style={styles.authButton}
+                  onPress={() => handleTestUserSignIn(defaultTestUserId)}
+                  activeOpacity={0.7}
+                  testID="profile-dev-signin-test-user"
+                >
+                  <Ionicons name="flask-outline" size={20} color="#FFFFFF" />
+                  <Text style={styles.authButtonText}>Continue as Test User</Text>
+                </TouchableOpacity>
+              )}
             </View>
           )}
 

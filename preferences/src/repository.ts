@@ -148,12 +148,27 @@ const writeSyncVersion = async (
   operationId: string | null,
   updatedAt: string
 ): Promise<void> => {
-  await updateSyncState(database, {
-    userId,
-    entityType: PREFERENCES_ENTITY_TYPE,
-    lastSyncedOperationId: operationId,
-    updatedAt,
-  });
+  await database.run(
+    `INSERT INTO sync_state (
+      user_id,
+      entity_type,
+      last_pulled_at,
+      last_pushed_at,
+      remote_cursor,
+      last_synced_operation_id,
+      updated_at
+    )
+    VALUES (?, ?, NULL, NULL, NULL, ?, ?)
+    ON CONFLICT(user_id, entity_type) DO UPDATE SET
+      last_synced_operation_id = excluded.last_synced_operation_id,
+      updated_at = excluded.updated_at;`,
+    [
+      userId,
+      PREFERENCES_ENTITY_TYPE,
+      operationId,
+      updatedAt,
+    ]
+  );
 };
 
 const isPreferencePayload = (payload: unknown): payload is PreferencePayload => {

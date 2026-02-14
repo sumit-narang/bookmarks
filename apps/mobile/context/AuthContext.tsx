@@ -1,6 +1,6 @@
 /**
  * AuthContext - Manages authentication state.
- * Supports Google and Apple Sign In with SQLite-backed session persistence.
+ * Supports Google, Apple, and dev/e2e test-user sign in with SQLite-backed session persistence.
  */
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
@@ -9,6 +9,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as WebBrowser from 'expo-web-browser';
 import { createAuthHttpClient } from '../../../auth/src/httpClient';
 import { BOOKMARKS_BACKEND_URL } from '../config/backend';
+import { buildInsecureTestIdentityToken, e2ePrimaryUserId, isE2eModeEnabled } from '../config/e2e';
 import {
   clearAuthSession,
   loadAuthSession,
@@ -30,8 +31,12 @@ interface AuthContextValue {
   user: AuthenticatedUser | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  isE2eMode: boolean;
+  isTestAuthEnabled: boolean;
+  defaultTestUserId: string;
   signInWithGoogle: () => Promise<void>;
   signInWithApple: () => Promise<void>;
+  signInWithTestUser: (userId: string) => Promise<void>;
   signOut: () => Promise<void>;
   googleAuthRequest: unknown;
 }
@@ -54,6 +59,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   });
 
   const authClient = createAuthHttpClient({ baseUrl: BOOKMARKS_BACKEND_URL });
+  const isDevTestAuthDisabled = process.env.EXPO_PUBLIC_BOOKMARKS_DEV_TEST_AUTH === '0';
+  const isTestAuthEnabled = isE2eModeEnabled || (__DEV__ && !isDevTestAuthDisabled);
+  const defaultTestUserId = isE2eModeEnabled
+    ? e2ePrimaryUserId
+    : process.env.EXPO_PUBLIC_BOOKMARKS_DEV_TEST_USER || 'dev-user';
 
   useEffect(() => {
     const bootstrapUser = async () => {
@@ -227,6 +237,54 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
   };
 
+  const signInWithTestUser = async (userId: string): Promise<void> => {
+    if (!isTestAuthEnabled) {
+      throw new Error('Test-user sign in is only available in e2e or development mode.');
+    }
+
+    const normalizedUserId = userId.trim();
+
+    if (!normalizedUserId) {
+      throw new Error('Test-user sign in requires a non-empty user ID.');
+    }
+
+    try {
+      const sessionResponse = await authClient.createSession({
+        provider: 'test',
+        providerUserId: normalizedUserId,
+        email: `${normalizedUserId}@bookmarks.test`,
+        name: normalizedUserId,
+        avatarUrl: null,
+        identityToken: buildInsecureTestIdentityToken(normalizedUserId),
+      });
+
+      await saveAuthSessionEnvelope(sessionResponse.session);
+
+      const authenticatedUser: AuthenticatedUser = {
+        id: sessionResponse.user.id,
+        email: sessionResponse.user.email,
+        name: sessionResponse.user.name ?? normalizedUserId,
+        picture: sessionResponse.user.avatarUrl,
+        provider: 'google',
+      };
+
+      await persistUser(authenticatedUser);
+      await migrateGuestDataToUser(authenticatedUser.id);
+      setActiveUserId(authenticatedUser.id);
+      setUser(authenticatedUser);
+
+      try {
+        await syncAuthenticatedData();
+      } catch (error) {
+        console.error('Error running test-user sync:', error);
+      }
+    } catch (error) {
+      console.error('Error signing in test user:', error);
+      await clearAuthSession();
+      throw error;
+    }
+  };
+
   const signOut = async (): Promise<void> => {
     try {
       const session = await loadAuthSession();
@@ -255,8 +313,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         user,
         isLoading,
         isAuthenticated: Boolean(user),
+        isE2eMode: isE2eModeEnabled,
+        isTestAuthEnabled,
+        defaultTestUserId,
         signInWithGoogle,
         signInWithApple,
+        signInWithTestUser,
         signOut,
         googleAuthRequest: request,
       }}

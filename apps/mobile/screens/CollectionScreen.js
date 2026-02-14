@@ -35,7 +35,15 @@ import { mediumHaptic, lightHaptic } from '../utils/haptics';
 const CollectionEmptyImage = require('../assets/icons/collection-empty.png');
 
 const CollectionScreen = ({ navigation }) => {
-  const { isAuthenticated, signInWithGoogle, signInWithApple } = useAuth();
+  const {
+    isAuthenticated,
+    isE2eMode,
+    isTestAuthEnabled,
+    defaultTestUserId,
+    signInWithGoogle,
+    signInWithApple,
+    signInWithTestUser,
+  } = useAuth();
   const [collections, setCollections] = useState([]);
   const [allSavedPlaces, setAllSavedPlaces] = useState([]);
   const [activeTab, setActiveTab] = useState('collection');
@@ -137,6 +145,16 @@ const CollectionScreen = ({ navigation }) => {
     }
   };
 
+  // Handle test-user sign in
+  const handleTestUserSignIn = async () => {
+    mediumHaptic();
+    try {
+      await signInWithTestUser(defaultTestUserId);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to sign in with test user.');
+    }
+  };
+
   // Handle more options button press
   const handleMoreOptions = (place) => {
     mediumHaptic();
@@ -181,6 +199,20 @@ const CollectionScreen = ({ navigation }) => {
               >
                 <AppleIcon width={24} height={24} />
                 <Text style={styles.authButtonText}>Continue with Apple</Text>
+              </TouchableOpacity>
+            )}
+
+            {isTestAuthEnabled && (
+              <TouchableOpacity
+                style={styles.authButton}
+                onPress={handleTestUserSignIn}
+                activeOpacity={0.7}
+                testID="collection-test-signin-button"
+              >
+                <Ionicons name="flask-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.authButtonText}>
+                  {isE2eMode ? 'Continue as E2E User A' : 'Continue as Test User'}
+                </Text>
               </TouchableOpacity>
             )}
           </View>

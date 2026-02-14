@@ -23,6 +23,7 @@ interface AuthSessionRef {
 }
 
 const refreshRequestByUserId = new Map<string, Promise<boolean>>();
+let activeAuthenticatedSyncRequest: Promise<AuthenticatedSyncResult | null> | null = null;
 
 const loadAuthSessionForUser = async (userId: string): Promise<MobileAuthSession | null> => {
   const persistedSession = await loadAuthSession();
@@ -152,12 +153,7 @@ export interface AuthenticatedSyncResult {
   collections: Awaited<ReturnType<typeof syncCollections>>;
 }
 
-/**
- * Run authenticated sync for preferences, places, and collections.
- * Returns null when there is no active authenticated session.
- * @returns {Promise<AuthenticatedSyncResult | null>}
- */
-export const syncAuthenticatedData = async (): Promise<AuthenticatedSyncResult | null> => {
+const runAuthenticatedSync = async (): Promise<AuthenticatedSyncResult | null> => {
   const activeUserId = getActiveUserId();
   const httpOptions = await createAuthenticatedHttpClientOptions();
 
@@ -194,4 +190,25 @@ export const syncAuthenticatedData = async (): Promise<AuthenticatedSyncResult |
     places,
     collections,
   };
+};
+
+/**
+ * Run authenticated sync for preferences, places, and collections.
+ * Returns null when there is no active authenticated session.
+ * Calls are serialized to avoid overlapping SQLite transactions.
+ * @returns {Promise<AuthenticatedSyncResult | null>}
+ */
+export const syncAuthenticatedData = async (): Promise<AuthenticatedSyncResult | null> => {
+  if (activeAuthenticatedSyncRequest) {
+    return activeAuthenticatedSyncRequest;
+  }
+
+  const syncRequest = runAuthenticatedSync().finally(() => {
+    if (activeAuthenticatedSyncRequest === syncRequest) {
+      activeAuthenticatedSyncRequest = null;
+    }
+  });
+
+  activeAuthenticatedSyncRequest = syncRequest;
+  return syncRequest;
 };

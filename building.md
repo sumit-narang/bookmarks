@@ -111,3 +111,39 @@ Then reopen the app.
 | `npm run android` | Build + install + run on Android device |
 | `npm run ios` | Build + run on iOS simulator |
 | `npm run web` | Run in browser (note: `react-native-maps` does not support web) |
+
+## Dev Test Auth (No Google)
+
+When running the local backend in development (`npm run backend:start`), test auth is enabled automatically.
+
+- In the mobile app (dev build), Profile and Library sign-in screens show a **Continue as Test User** button.
+- Optional: set `EXPO_PUBLIC_BOOKMARKS_DEV_TEST_USER` in `apps/mobile/.env` to pick a custom test user ID.
+- Optional: set `EXPO_PUBLIC_BOOKMARKS_DEV_TEST_AUTH=0` to hide the dev test-auth button.
+- Production remains protected: backend rejects test auth when `NODE_ENV=production`.
+
+## Mobile E2E (Maestro, Android)
+
+1. Enable e2e mode in `apps/mobile/.env`:
+
+```bash
+EXPO_PUBLIC_BOOKMARKS_E2E_MODE=1
+EXPO_PUBLIC_BOOKMARKS_BACKEND_URL=http://127.0.0.1:8787
+```
+
+2. Start seeded backend (test auth provider + stable e2e users):
+
+```bash
+npm run mobile:e2e:backend:start
+```
+
+3. Run Android e2e flows:
+
+```bash
+npm run mobile:e2e:android
+```
+
+Artifacts (JUnit, logs, diagnostics capture on failure) are written under:
+
+```bash
+.bookmarks/e2e-artifacts/
+```
