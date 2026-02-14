@@ -30,12 +30,20 @@ source ~/.bashrc
 
 ### 2. Create `.env` file
 
-Create a `.env` file in `apps/mobile`:
+Copy the template and fill in your values:
+
+```bash
+cp apps/mobile/.env.example apps/mobile/.env
+```
+
+Required entries:
 
 ```
 EXPO_PUBLIC_GOOGLE_PLACES_API_KEY=<your-google-places-api-key>
 JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 ```
+
+Additional optional entries are documented in `apps/mobile/.env.example`.
 
 The `JAVA_HOME` entry ensures the Expo/Gradle build uses Java 17 regardless of your system default.
 

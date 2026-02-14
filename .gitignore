@@ -37,6 +37,8 @@ yarn-error.*
 .env
 .env.*
 .env*.local
+!.env.example
+!apps/mobile/.env.example
 
 # typescript
 *.tsbuildinfo
