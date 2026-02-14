@@ -1,0 +1,8 @@
+appId: com.sumitnarang76.bookmarksmobile
+---
+- launchApp
+- openLink: bookmarks://diagnostics
+- tapOn:
+    id: e2e-diagnostics-action-refresh
+- assertVisible:
+    id: e2e-diagnostics-active-user-id

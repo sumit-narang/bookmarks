@@ -11,6 +11,8 @@
     "ios": "npm --workspace @bookmarks/mobile run ios",
     "web": "npm --workspace @bookmarks/mobile run web",
     "mobile:start": "npm --workspace @bookmarks/mobile run start",
+    "mobile:e2e:backend:start": "npm --workspace @bookmarks/backend run start:e2e",
+    "mobile:e2e:android": "./scripts/mobileE2eAndroid.sh",
     "backend:start": "npm --workspace @bookmarks/backend run start",
     "cli": "npm --workspace @bookmarks/cli run cli --",
     "typecheck": "tsc --noEmit",

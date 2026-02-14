@@ -495,8 +495,15 @@ const verifyTestIdentity = (identity: AuthIdentityInput, authOptions: BackendAut
   const expectedToken = createHmac('sha256', authOptions.tokenSecret)
     .update(`${identity.provider}:${identity.providerUserId}`)
     .digest('hex');
+  const allowInsecureTestTokens = process.env.BOOKMARKS_AUTH_ALLOW_INSECURE_TEST_TOKENS === '1';
+  const insecureToken = `test-token:${identity.providerUserId}`;
 
-  if (!isTimingSafeStringEqual(identityToken, expectedToken)) {
+  const isValidHmacToken = isTimingSafeStringEqual(identityToken, expectedToken);
+  const isValidInsecureToken = allowInsecureTestTokens
+    ? isTimingSafeStringEqual(identityToken, insecureToken)
+    : false;
+
+  if (!isValidHmacToken && !isValidInsecureToken) {
     throw unauthorized('Test identity token is invalid.');
   }
 
@@ -1240,6 +1247,7 @@ interface PlaceSyncSnapshotRow {
   image_url: string | null;
   metadata_json: string | null;
   updated_at: string;
+  last_operation_id: string | null;
   deleted_at: string | null;
 }
 
@@ -1331,6 +1339,7 @@ const handlePlaceSyncPull = async (
          image_url,
          metadata_json,
          updated_at,
+         last_operation_id,
          deleted_at
        FROM places
        WHERE user_id = ?
@@ -1344,7 +1353,7 @@ const handlePlaceSyncPull = async (
       return {
         entityId: row.id,
         updatedAt: row.updated_at,
-        operationId: `${row.updated_at}:${row.id}`,
+        operationId: row.last_operation_id ?? `${row.updated_at}:${row.id}`,
         data: {
           userId: row.user_id,
           placeId: row.id,
@@ -1382,6 +1391,7 @@ interface CollectionSyncSnapshotRow {
   name: string;
   cover_image: string | null;
   updated_at: string;
+  last_operation_id: string | null;
   deleted_at: string | null;
 }
 
@@ -1464,7 +1474,7 @@ const handleCollectionSyncPull = async (
 
   try {
     const rows = await adapter.all<CollectionSyncSnapshotRow>(
-      `SELECT id, user_id, name, cover_image, updated_at, deleted_at
+      `SELECT id, user_id, name, cover_image, updated_at, last_operation_id, deleted_at
        FROM collections
        WHERE user_id = ?
        ORDER BY updated_at ASC, id ASC;`,
@@ -1491,7 +1501,7 @@ const handleCollectionSyncPull = async (
         entities.push({
           entityId: row.id,
           updatedAt: row.updated_at,
-          operationId: `${row.updated_at}:${row.id}`,
+          operationId: row.last_operation_id ?? `${row.updated_at}:${row.id}`,
           data: {
             userId: row.user_id,
             collectionId: row.id,

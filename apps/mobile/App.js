@@ -13,6 +13,7 @@ import AppNavigator from './navigation/AppNavigator';
 import { initializeStorage } from './data/storage';
 import { colors } from './styles/colors';
 import { AuthProvider } from './context/AuthContext';
+import { isE2eModeEnabled } from './config/e2e';
 
 // Deep linking configuration
 const prefix = Linking.createURL('/');
@@ -35,6 +36,7 @@ const linking = {
           data: (data) => data,
         },
       },
+      ...(isE2eModeEnabled ? { Diagnostics: 'diagnostics' } : {}),
       Main: {
         screens: {
           LibraryTab: {

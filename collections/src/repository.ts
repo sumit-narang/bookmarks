@@ -40,6 +40,7 @@ interface CollectionVersionRow {
   id: string;
   user_id: string;
   updated_at: string;
+  last_operation_id: string | null;
   deleted_at: string | null;
 }
 
@@ -114,12 +115,26 @@ const toCollectionInput = (validated: ValidatedCollectionInput): CollectionInput
   };
 };
 
-const compareCollectionTimestamps = (leftUpdatedAt: string, rightUpdatedAt: string): number => {
-  if (leftUpdatedAt > rightUpdatedAt) {
+const compareCollectionVersions = (
+  left: { updatedAt: string; operationId: string | null },
+  right: { updatedAt: string; operationId: string | null }
+): number => {
+  if (left.updatedAt > right.updatedAt) {
     return 1;
   }
 
-  if (leftUpdatedAt < rightUpdatedAt) {
+  if (left.updatedAt < right.updatedAt) {
+    return -1;
+  }
+
+  const leftOperationId = left.operationId ?? '';
+  const rightOperationId = right.operationId ?? '';
+
+  if (leftOperationId > rightOperationId) {
+    return 1;
+  }
+
+  if (leftOperationId < rightOperationId) {
     return -1;
   }
 
@@ -132,7 +147,7 @@ const readCollectionVersion = async (
   collectionId: string
 ): Promise<CollectionVersionRow | null> => {
   return database.get<CollectionVersionRow>(
-    `SELECT id, user_id, updated_at, deleted_at
+    `SELECT id, user_id, updated_at, last_operation_id, deleted_at
      FROM collections
      WHERE id = ? AND user_id = ?;`,
     [collectionId, userId]
@@ -217,9 +232,11 @@ const upsertCollectionRow = async (
   userId: string,
   collectionId: string,
   input: ValidatedCollectionInput,
-  updatedAt: string
+  updatedAt: string,
+  operationId: string | null
 ): Promise<void> => {
   const existing = await readCollectionVersion(database, userId, collectionId);
+  const operationIdForWrite = operationId ?? `${updatedAt}:${collectionId}`;
 
   if (existing) {
     await database.run(
@@ -227,17 +244,27 @@ const upsertCollectionRow = async (
          name = ?,
          cover_image = ?,
          updated_at = ?,
+         last_operation_id = ?,
          deleted_at = NULL
        WHERE id = ? AND user_id = ?;`,
-      [input.name, input.coverImage, updatedAt, collectionId, userId]
+      [input.name, input.coverImage, updatedAt, operationIdForWrite, collectionId, userId]
     );
     return;
   }
 
   await database.run(
-    `INSERT INTO collections (id, user_id, name, cover_image, created_at, updated_at, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL);`,
-    [collectionId, userId, input.name, input.coverImage, updatedAt, updatedAt]
+    `INSERT INTO collections (
+      id,
+      user_id,
+      name,
+      cover_image,
+      created_at,
+      updated_at,
+      last_operation_id,
+      deleted_at
+    )
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL);`,
+    [collectionId, userId, input.name, input.coverImage, updatedAt, updatedAt, operationIdForWrite]
   );
 };
 
@@ -245,12 +272,17 @@ const touchCollectionTimestamp = async (
   database: DatabaseAdapter,
   userId: string,
   collectionId: string,
-  updatedAt: string
+  updatedAt: string,
+  operationId: string | null = null
 ): Promise<void> => {
+  const operationIdForWrite = operationId ?? `${updatedAt}:${collectionId}`;
+
   await database.run(
-    `UPDATE collections SET updated_at = ?
+    `UPDATE collections
+     SET updated_at = ?,
+         last_operation_id = ?
      WHERE id = ? AND user_id = ?;`,
-    [updatedAt, collectionId, userId]
+    [updatedAt, operationIdForWrite, collectionId, userId]
   );
 };
 
@@ -355,6 +387,7 @@ const SELECT_COLLECTION_FIELDS = `
   c.cover_image,
   c.created_at,
   c.updated_at,
+  c.last_operation_id,
   c.deleted_at,
   ${PLACE_COUNT_SUBQUERY}`;
 
@@ -383,6 +416,7 @@ const SELECT_PLACE_FIELDS = `
   p.metadata_json,
   p.created_at,
   p.updated_at,
+  p.last_operation_id,
   p.deleted_at,
   ${IS_SAVED_SUBQUERY}`;
 
@@ -407,14 +441,32 @@ export const createCollection = async (
   const nextOperationId = options.operationId === undefined
     ? (shouldRecordOutbox ? createUuid() : null)
     : options.operationId;
+  const operationIdForWrite = nextOperationId ?? `${timestamp}:${collectionId}`;
 
   await database.transaction(async (tx) => {
     await ensureUserExists(tx, options.userId, timestamp);
 
     await tx.run(
-      `INSERT INTO collections (id, user_id, name, cover_image, created_at, updated_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, NULL);`,
-      [collectionId, options.userId, validated.name, validated.coverImage, timestamp, timestamp]
+      `INSERT INTO collections (
+        id,
+        user_id,
+        name,
+        cover_image,
+        created_at,
+        updated_at,
+        last_operation_id,
+        deleted_at
+      )
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL);`,
+      [
+        collectionId,
+        options.userId,
+        validated.name,
+        validated.coverImage,
+        timestamp,
+        timestamp,
+        operationIdForWrite,
+      ]
     );
 
     if (shouldRecordOutbox && nextOperationId) {
@@ -501,12 +553,24 @@ export const updateCollection = async (
   const nextOperationId = options.operationId === undefined
     ? (shouldRecordOutbox ? createUuid() : null)
     : options.operationId;
+  const operationIdForWrite = nextOperationId ?? `${timestamp}:${options.collectionId}`;
 
   await database.transaction(async (tx) => {
     const result = await tx.run(
-      `UPDATE collections SET name = ?, cover_image = ?, updated_at = ?
+      `UPDATE collections
+       SET name = ?,
+           cover_image = ?,
+           updated_at = ?,
+           last_operation_id = ?
        WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
-      [validated.name, validated.coverImage, timestamp, options.collectionId, options.userId]
+      [
+        validated.name,
+        validated.coverImage,
+        timestamp,
+        operationIdForWrite,
+        options.collectionId,
+        options.userId,
+      ]
     );
 
     if (result.changes === 0) {
@@ -558,13 +622,17 @@ export const removeCollection = async (
   const nextOperationId = options.operationId === undefined
     ? (shouldRecordOutbox ? createUuid() : null)
     : options.operationId;
+  const operationIdForWrite = nextOperationId ?? `${timestamp}:${collectionId}`;
   let removed = false;
 
   await database.transaction(async (tx) => {
     const result = await tx.run(
-      `UPDATE collections SET deleted_at = ?, updated_at = ?
+      `UPDATE collections
+       SET deleted_at = ?,
+           updated_at = ?,
+           last_operation_id = ?
        WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
-      [timestamp, timestamp, collectionId, userId]
+      [timestamp, timestamp, operationIdForWrite, collectionId, userId]
     );
 
     removed = result.changes > 0;
@@ -612,6 +680,7 @@ export const addPlaceToCollection = async (
   const nextOperationId = options.operationId === undefined
     ? (shouldRecordOutbox ? createUuid() : null)
     : options.operationId;
+  const operationIdForWrite = nextOperationId ?? `${timestamp}:${options.collectionId}`;
 
   return await database.transaction(async (tx) => {
     // Verify collection belongs to user and is not deleted
@@ -663,7 +732,13 @@ export const addPlaceToCollection = async (
         [nextPosition, timestamp, options.collectionId, options.placeId]
       );
 
-      await touchCollectionTimestamp(tx, options.userId, options.collectionId, timestamp);
+      await touchCollectionTimestamp(
+        tx,
+        options.userId,
+        options.collectionId,
+        timestamp,
+        operationIdForWrite
+      );
 
       if (shouldRecordOutbox && nextOperationId) {
         await recordCollectionOutboxMutation(tx, {
@@ -693,7 +768,13 @@ export const addPlaceToCollection = async (
       [options.collectionId, options.placeId, nextPosition, timestamp, timestamp]
     );
 
-    await touchCollectionTimestamp(tx, options.userId, options.collectionId, timestamp);
+    await touchCollectionTimestamp(
+      tx,
+      options.userId,
+      options.collectionId,
+      timestamp,
+      operationIdForWrite
+    );
 
     if (shouldRecordOutbox && nextOperationId) {
       await recordCollectionOutboxMutation(tx, {
@@ -725,6 +806,7 @@ export const removePlaceFromCollection = async (
   const nextOperationId = options.operationId === undefined
     ? (shouldRecordOutbox ? createUuid() : null)
     : options.operationId;
+  const operationIdForWrite = nextOperationId ?? `${timestamp}:${options.collectionId}`;
 
   return await database.transaction(async (tx) => {
     const result = await tx.run(
@@ -739,7 +821,13 @@ export const removePlaceFromCollection = async (
       return false;
     }
 
-    await touchCollectionTimestamp(tx, options.userId, options.collectionId, timestamp);
+    await touchCollectionTimestamp(
+      tx,
+      options.userId,
+      options.collectionId,
+      timestamp,
+      operationIdForWrite
+    );
 
     if (shouldRecordOutbox && nextOperationId) {
       await recordCollectionOutboxMutation(tx, {
@@ -869,7 +957,19 @@ export const applyCollectionSyncOperation = async (
   await database.transaction(async (tx) => {
     const existing = await readCollectionVersion(tx, operation.userId, operation.collectionId);
 
-    if (existing && compareCollectionTimestamps(operation.updatedAt, existing.updated_at) <= 0) {
+    if (
+      existing
+      && compareCollectionVersions(
+        {
+          updatedAt: operation.updatedAt,
+          operationId: operation.operationId,
+        },
+        {
+          updatedAt: existing.updated_at,
+          operationId: existing.last_operation_id ?? `${existing.updated_at}:${existing.id}`,
+        }
+      ) <= 0
+    ) {
       collection = existing.deleted_at ? null : await getCollection(tx, operation.userId, operation.collectionId);
       return;
     }
@@ -879,9 +979,16 @@ export const applyCollectionSyncOperation = async (
         const result = await tx.run(
           `UPDATE collections
            SET deleted_at = ?,
-               updated_at = ?
+               updated_at = ?,
+               last_operation_id = ?
            WHERE id = ? AND user_id = ?;`,
-          [operation.updatedAt, operation.updatedAt, operation.collectionId, operation.userId]
+          [
+            operation.updatedAt,
+            operation.updatedAt,
+            operation.operationId,
+            operation.collectionId,
+            operation.userId,
+          ]
         );
 
         if (result.changes > 0) {
@@ -907,7 +1014,14 @@ export const applyCollectionSyncOperation = async (
 
         const validated = validateCollectionInput(operation.collection);
         await ensureUserExists(tx, operation.userId, operation.updatedAt);
-        await upsertCollectionRow(tx, operation.userId, operation.collectionId, validated, operation.updatedAt);
+        await upsertCollectionRow(
+          tx,
+          operation.userId,
+          operation.collectionId,
+          validated,
+          operation.updatedAt,
+          operation.operationId
+        );
 
         if (operation.placeIds) {
           await reconcileCollectionMemberships(
@@ -917,7 +1031,13 @@ export const applyCollectionSyncOperation = async (
             operation.placeIds,
             operation.updatedAt
           );
-          await touchCollectionTimestamp(tx, operation.userId, operation.collectionId, operation.updatedAt);
+          await touchCollectionTimestamp(
+            tx,
+            operation.userId,
+            operation.collectionId,
+            operation.updatedAt,
+            operation.operationId
+          );
         }
 
         applied = true;
@@ -975,7 +1095,13 @@ export const applyCollectionSyncOperation = async (
           );
         }
 
-        await touchCollectionTimestamp(tx, operation.userId, operation.collectionId, operation.updatedAt);
+        await touchCollectionTimestamp(
+          tx,
+          operation.userId,
+          operation.collectionId,
+          operation.updatedAt,
+          operation.operationId
+        );
         applied = true;
         collection = await getCollection(tx, operation.userId, operation.collectionId);
         return;
@@ -994,7 +1120,13 @@ export const applyCollectionSyncOperation = async (
         );
 
         if (result.changes > 0) {
-          await touchCollectionTimestamp(tx, operation.userId, operation.collectionId, operation.updatedAt);
+          await touchCollectionTimestamp(
+            tx,
+            operation.userId,
+            operation.collectionId,
+            operation.updatedAt,
+            operation.operationId
+          );
           applied = true;
         }
 

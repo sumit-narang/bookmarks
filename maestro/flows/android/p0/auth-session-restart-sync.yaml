@@ -1,0 +1,23 @@
+appId: com.sumitnarang76.bookmarksmobile
+---
+- launchApp:
+    clearState: true
+- openLink: bookmarks://diagnostics
+- tapOn:
+    id: e2e-diagnostics-action-signin-user-a
+- tapOn:
+    id: e2e-diagnostics-action-refresh
+- assertVisible: "activeUserId: e2e-user-a"
+- assertVisible: "hasAuthSession: true"
+- stopApp
+- launchApp
+- openLink: bookmarks://diagnostics
+- tapOn:
+    id: e2e-diagnostics-action-refresh
+- assertVisible: "activeUserId: e2e-user-a"
+- assertVisible: "hasAuthSession: true"
+- tapOn:
+    id: e2e-diagnostics-action-run-sync
+- tapOn:
+    id: e2e-diagnostics-action-refresh
+- assertVisible: "hasAuthSession: true"

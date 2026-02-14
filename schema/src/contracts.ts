@@ -26,6 +26,7 @@ export interface PlaceRow {
   metadata_json: string | null;
   created_at: string;
   updated_at: string;
+  last_operation_id: string | null;
   deleted_at: string | null;
 }
 
@@ -36,6 +37,7 @@ export interface CollectionRow {
   cover_image: string | null;
   created_at: string;
   updated_at: string;
+  last_operation_id: string | null;
   deleted_at: string | null;
 }
 

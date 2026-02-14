@@ -1,0 +1,17 @@
+appId: com.sumitnarang76.bookmarksmobile
+---
+- launchApp:
+    clearState: true
+- openLink: bookmarks://diagnostics
+- tapOn:
+    id: e2e-diagnostics-action-signin-user-a
+- tapOn:
+    id: e2e-diagnostics-action-create-place
+- tapOn:
+    id: e2e-diagnostics-action-refresh
+- assertVisible: "outboxPending: 1"
+- tapOn:
+    id: e2e-diagnostics-action-run-sync
+- tapOn:
+    id: e2e-diagnostics-action-refresh
+- assertVisible: "outboxPending: 0"

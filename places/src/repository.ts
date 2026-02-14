@@ -28,6 +28,7 @@ interface PlaceVersionRow {
   id: string;
   user_id: string;
   updated_at: string;
+  last_operation_id: string | null;
   deleted_at: string | null;
 }
 
@@ -122,19 +123,33 @@ const readPlaceVersion = async (
   placeId: string
 ): Promise<PlaceVersionRow | null> => {
   return database.get<PlaceVersionRow>(
-    `SELECT id, user_id, updated_at, deleted_at
+    `SELECT id, user_id, updated_at, last_operation_id, deleted_at
      FROM places
      WHERE id = ? AND user_id = ?;`,
     [placeId, userId]
   );
 };
 
-const comparePlaceTimestamps = (leftUpdatedAt: string, rightUpdatedAt: string): number => {
-  if (leftUpdatedAt > rightUpdatedAt) {
+const comparePlaceVersions = (
+  left: { updatedAt: string; operationId: string | null },
+  right: { updatedAt: string; operationId: string | null }
+): number => {
+  if (left.updatedAt > right.updatedAt) {
     return 1;
   }
 
-  if (leftUpdatedAt < rightUpdatedAt) {
+  if (left.updatedAt < right.updatedAt) {
+    return -1;
+  }
+
+  const leftOperationId = left.operationId ?? '';
+  const rightOperationId = right.operationId ?? '';
+
+  if (leftOperationId > rightOperationId) {
+    return 1;
+  }
+
+  if (leftOperationId < rightOperationId) {
     return -1;
   }
 
@@ -181,6 +196,7 @@ const SELECT_PLACE_FIELDS = `
   p.metadata_json,
   p.created_at,
   p.updated_at,
+  p.last_operation_id,
   p.deleted_at,
   ${IS_SAVED_SUBQUERY}`;
 
@@ -216,6 +232,7 @@ export const upsertPlace = async (
     : options.operationId;
 
   let placeId: string | null = null;
+  let resolvedOperationId: string | null = nextOperationId;
 
   await database.transaction(async (tx) => {
     await ensureUserExists(tx, options.userId, timestamp);
@@ -228,6 +245,8 @@ export const upsertPlace = async (
       );
 
       placeId = options.placeId;
+      const operationIdForWrite = resolvedOperationId ?? `${timestamp}:${placeId}`;
+      resolvedOperationId = operationIdForWrite;
 
       if (existingById) {
         await tx.run(
@@ -242,6 +261,7 @@ export const upsertPlace = async (
             image_url = ?,
             metadata_json = ?,
             updated_at = ?,
+            last_operation_id = ?,
             deleted_at = NULL
           WHERE id = ? AND user_id = ?;`,
           [
@@ -255,6 +275,7 @@ export const upsertPlace = async (
             validated.imageUrl,
             validated.metadataJson,
             timestamp,
+            operationIdForWrite,
             placeId,
             options.userId,
           ]
@@ -264,8 +285,8 @@ export const upsertPlace = async (
           `INSERT INTO places (
             id, user_id, google_place_id, name, address,
             latitude, longitude, rating, notes, image_url,
-            metadata_json, created_at, updated_at, deleted_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+            metadata_json, created_at, updated_at, last_operation_id, deleted_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
           [
             placeId,
             options.userId,
@@ -280,6 +301,7 @@ export const upsertPlace = async (
             validated.metadataJson,
             timestamp,
             timestamp,
+            operationIdForWrite,
           ]
         );
       }
@@ -294,6 +316,8 @@ export const upsertPlace = async (
 
         if (existing) {
           placeId = existing.id;
+          const operationIdForWrite = resolvedOperationId ?? `${timestamp}:${placeId}`;
+          resolvedOperationId = operationIdForWrite;
 
           await tx.run(
             `UPDATE places SET
@@ -305,7 +329,8 @@ export const upsertPlace = async (
               notes = ?,
               image_url = ?,
               metadata_json = ?,
-              updated_at = ?
+              updated_at = ?,
+              last_operation_id = ?
             WHERE id = ? AND user_id = ?;`,
             [
               validated.name,
@@ -317,6 +342,7 @@ export const upsertPlace = async (
               validated.imageUrl,
               validated.metadataJson,
               timestamp,
+              operationIdForWrite,
               placeId,
               options.userId,
             ]
@@ -327,13 +353,15 @@ export const upsertPlace = async (
       if (!placeId) {
         // Insert new place row
         placeId = createUuid();
+        const operationIdForWrite = resolvedOperationId ?? `${timestamp}:${placeId}`;
+        resolvedOperationId = operationIdForWrite;
 
         await tx.run(
           `INSERT INTO places (
             id, user_id, google_place_id, name, address,
             latitude, longitude, rating, notes, image_url,
-            metadata_json, created_at, updated_at, deleted_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+            metadata_json, created_at, updated_at, last_operation_id, deleted_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
           [
             placeId,
             options.userId,
@@ -348,6 +376,7 @@ export const upsertPlace = async (
             validated.metadataJson,
             timestamp,
             timestamp,
+            operationIdForWrite,
           ]
         );
       }
@@ -449,14 +478,15 @@ export const removePlace = async (
   const nextOperationId = options.operationId === undefined
     ? (shouldRecordOutbox ? createUuid() : null)
     : options.operationId;
+  const operationIdForWrite = nextOperationId ?? `${timestamp}:${placeId}`;
 
   let removed = false;
 
   await database.transaction(async (tx) => {
     const result = await tx.run(
-      `UPDATE places SET deleted_at = ?, updated_at = ?
+      `UPDATE places SET deleted_at = ?, updated_at = ?, last_operation_id = ?
        WHERE id = ? AND user_id = ? AND deleted_at IS NULL;`,
-      [timestamp, timestamp, placeId, userId]
+      [timestamp, timestamp, operationIdForWrite, placeId, userId]
     );
 
     removed = result.changes > 0;
@@ -526,7 +556,19 @@ export const applyPlaceSyncOperation = async (
   await database.transaction(async (tx) => {
     const existing = await readPlaceVersion(tx, operation.userId, operation.placeId);
 
-    if (existing && comparePlaceTimestamps(operation.updatedAt, existing.updated_at) <= 0) {
+    if (
+      existing
+      && comparePlaceVersions(
+        {
+          updatedAt: operation.updatedAt,
+          operationId: operation.operationId,
+        },
+        {
+          updatedAt: existing.updated_at,
+          operationId: existing.last_operation_id ?? `${existing.updated_at}:${existing.id}`,
+        }
+      ) <= 0
+    ) {
       place = existing.deleted_at ? null : await getPlace(tx, operation.userId, operation.placeId);
       return;
     }
@@ -535,9 +577,16 @@ export const applyPlaceSyncOperation = async (
       const result = await tx.run(
         `UPDATE places
          SET deleted_at = ?,
-             updated_at = ?
+             updated_at = ?,
+             last_operation_id = ?
          WHERE id = ? AND user_id = ?;`,
-        [operation.updatedAt, operation.updatedAt, operation.placeId, operation.userId]
+        [
+          operation.updatedAt,
+          operation.updatedAt,
+          operation.operationId,
+          operation.placeId,
+          operation.userId,
+        ]
       );
 
       applied = result.changes > 0;
@@ -565,6 +614,7 @@ export const applyPlaceSyncOperation = async (
           image_url = ?,
           metadata_json = ?,
           updated_at = ?,
+          last_operation_id = ?,
           deleted_at = NULL
         WHERE id = ? AND user_id = ?;`,
         [
@@ -578,6 +628,7 @@ export const applyPlaceSyncOperation = async (
           validated.imageUrl,
           validated.metadataJson,
           operation.updatedAt,
+          operation.operationId,
           operation.placeId,
           operation.userId,
         ]
@@ -587,8 +638,8 @@ export const applyPlaceSyncOperation = async (
         `INSERT INTO places (
           id, user_id, google_place_id, name, address,
           latitude, longitude, rating, notes, image_url,
-          metadata_json, created_at, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
+          metadata_json, created_at, updated_at, last_operation_id, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
         [
           operation.placeId,
           operation.userId,
@@ -603,6 +654,7 @@ export const applyPlaceSyncOperation = async (
           validated.metadataJson,
           operation.updatedAt,
           operation.updatedAt,
+          operation.operationId,
         ]
       );
     }

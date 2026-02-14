@@ -187,7 +187,11 @@ const HomeScreen = ({ navigation }) => {
       {/* Profile Button */}
       <SafeAreaView style={styles.headerOverlay}>
         <View style={styles.headerRight}>
-          <TouchableOpacity style={styles.profileBtn} onPress={handleProfilePress}>
+          <TouchableOpacity
+            style={styles.profileBtn}
+            onPress={handleProfilePress}
+            testID="home-profile-button"
+          >
             <View style={styles.avatarBlurWrapper}>
               <BlurView intensity={34} tint="dark" style={styles.avatarBlurView}>
                 <LinearGradient
