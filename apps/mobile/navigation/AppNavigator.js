@@ -17,6 +17,8 @@ import PlacesInCollectionScreen from '../screens/PlacesInCollectionScreen';
 import SharedCollectionScreen from '../screens/SharedCollectionScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import HexagonCustomizerScreen from '../screens/HexagonCustomizerScreen';
+import DiagnosticsScreen from '../screens/DiagnosticsScreen';
+import { isE2eModeEnabled } from '../config/e2e';
 
 // Modals
 import SaveToCollectionModal from '../modals/SaveToCollectionModal';
@@ -46,8 +48,6 @@ const HomeStack = () => {
     >
       <Stack.Screen name="HomeMain" component={HomeScreen} />
       <Stack.Screen name="PlaceDetails" component={PlaceDetailsScreen} />
-      <Stack.Screen name="Profile" component={ProfileScreen} />
-      <Stack.Screen name="HexagonCustomizer" component={HexagonCustomizerScreen} />
     </Stack.Navigator>
   );
 };
@@ -101,9 +101,21 @@ const TabNavigator = () => {
         tabBarShowLabel: false,
       }}
     >
-      <Tab.Screen name="MapTab" component={HomeStack} />
-      <Tab.Screen name="AddTab" component={AddStack} />
-      <Tab.Screen name="LibraryTab" component={LibraryStack} />
+      <Tab.Screen
+        name="MapTab"
+        component={HomeStack}
+        options={{ tabBarTestID: 'tab-map' }}
+      />
+      <Tab.Screen
+        name="AddTab"
+        component={AddStack}
+        options={{ tabBarTestID: 'tab-add' }}
+      />
+      <Tab.Screen
+        name="LibraryTab"
+        component={LibraryStack}
+        options={{ tabBarTestID: 'tab-library' }}
+      />
     </Tab.Navigator>
   );
 };
@@ -120,6 +132,11 @@ const AppNavigator = () => {
       }}
     >
       <Stack.Screen name="Main" component={TabNavigator} />
+      <Stack.Screen name="Profile" component={ProfileScreen} />
+      <Stack.Screen name="HexagonCustomizer" component={HexagonCustomizerScreen} />
+      {isE2eModeEnabled && (
+        <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} />
+      )}
       <Stack.Screen name="SharedCollection" component={SharedCollectionScreen} />
       <Stack.Group
         screenOptions={{

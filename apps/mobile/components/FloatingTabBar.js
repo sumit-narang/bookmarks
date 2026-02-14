@@ -46,8 +46,8 @@ const FloatingTabBar = ({ state, descriptors, navigation }) => {
   const nestedState = currentRoute?.state;
   const nestedRouteName = nestedState?.routes?.[nestedState.index]?.name;
 
-  // Hide tab bar on Profile and PlaceDetails screens
-  if (nestedRouteName === 'Profile' || nestedRouteName === 'PlaceDetails') {
+  // Hide tab bar on PlaceDetails screen (Profile lives in root stack, above tabs)
+  if (nestedRouteName === 'PlaceDetails') {
     return null;
   }
 

@@ -7,15 +7,16 @@ import {
   View,
   Text,
   TouchableOpacity,
-  SafeAreaView,
   StyleSheet,
   Platform,
   Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../styles/colors';
 import { typography } from '../styles/typography';
 import { useAuth } from '../context/AuthContext';
+import { e2ePrimaryUserId, e2eSecondaryUserId } from '../config/e2e';
 
 // SVG Icons
 import ImportIcon from '../assets/icons/import.svg';
@@ -25,7 +26,14 @@ import GoogleIcon from '../assets/icons/google-icon.svg';
 import AppleIcon from '../assets/icons/apple-icon.svg';
 
 const ProfileScreen = ({ navigation }) => {
-  const { user, isAuthenticated, signInWithGoogle, signInWithApple, signOut } = useAuth();
+  const {
+    isAuthenticated,
+    isE2eMode,
+    signInWithGoogle,
+    signInWithApple,
+    signInWithTestUser,
+    signOut,
+  } = useAuth();
 
   // Handle back button
   const handleBack = () => {
@@ -55,6 +63,20 @@ const ProfileScreen = ({ navigation }) => {
         Alert.alert('Error', 'Failed to sign in with Apple. Please try again.');
       }
     }
+  };
+
+  // Handle E2E test-user sign in
+  const handleE2eSignIn = async (userId) => {
+    try {
+      await signInWithTestUser(userId);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to sign in with e2e test user.');
+    }
+  };
+
+  // Open diagnostics screen (e2e mode)
+  const handleDiagnosticsPress = () => {
+    navigation.navigate('Diagnostics');
   };
 
   // Handle Log Out
@@ -165,6 +187,21 @@ const ProfileScreen = ({ navigation }) => {
             <Ionicons name="cube-outline" size={18} color={colors.textPrimary} />
             <Text style={styles.optionText}>Hexagon Customizer</Text>
           </TouchableOpacity>
+
+          {isE2eMode && (
+            <>
+              <View style={styles.separator} />
+              <TouchableOpacity
+                style={styles.optionItem}
+                onPress={handleDiagnosticsPress}
+                activeOpacity={0.7}
+                testID="profile-diagnostics-button"
+              >
+                <Ionicons name="bug-outline" size={18} color={colors.textPrimary} />
+                <Text style={styles.optionText}>Diagnostics</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       ) : (
         /* Not Logged In - Sign Up UI */
@@ -198,6 +235,38 @@ const ProfileScreen = ({ navigation }) => {
               </TouchableOpacity>
             )}
           </View>
+
+          {isE2eMode && (
+            <View style={styles.authButtonContainer}>
+              <TouchableOpacity
+                style={styles.authButton}
+                onPress={() => handleE2eSignIn(e2ePrimaryUserId)}
+                activeOpacity={0.7}
+                testID="profile-e2e-signin-user-a"
+              >
+                <Ionicons name="flask-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.authButtonText}>Continue as E2E User A</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.authButton}
+                onPress={() => handleE2eSignIn(e2eSecondaryUserId)}
+                activeOpacity={0.7}
+                testID="profile-e2e-signin-user-b"
+              >
+                <Ionicons name="flask-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.authButtonText}>Continue as E2E User B</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.devToolButton}
+                onPress={handleDiagnosticsPress}
+                activeOpacity={0.7}
+                testID="profile-diagnostics-button"
+              >
+                <Ionicons name="bug-outline" size={18} color="#888" />
+                <Text style={styles.devToolText}>Diagnostics</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
           {/* Hexagon Customizer - Dev Tool */}
           <TouchableOpacity

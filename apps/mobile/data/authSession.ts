@@ -2,11 +2,15 @@
  * Mobile auth-session persistence helpers.
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { nowIso } from '../../../core/src';
 import type { AuthSessionEnvelope } from '../../../auth/src/contracts';
 
-const AUTH_SESSION_STORAGE_KEY = '@bookmarks_auth_session';
+const AUTH_SESSION_STORAGE_KEY = 'bookmarks_auth_session';
+
+/** @deprecated Legacy key used before expo-secure-store adoption. */
+const LEGACY_AUTH_SESSION_STORAGE_KEY = '@bookmarks_auth_session';
 
 interface CredentialStorage {
   getItem(key: string): Promise<string | null>;
@@ -20,17 +24,15 @@ interface SecureStoreModuleLike {
   deleteItemAsync(key: string): Promise<void>;
 }
 
-const inMemoryCredentialStore = new Map<string, string>();
-
-const volatileCredentialStorage: CredentialStorage = {
+const asyncStorageCredentialStorage: CredentialStorage = {
   async getItem(key) {
-    return inMemoryCredentialStore.get(key) ?? null;
+    return AsyncStorage.getItem(key);
   },
   async setItem(key, value) {
-    inMemoryCredentialStore.set(key, value);
+    await AsyncStorage.setItem(key, value);
   },
   async removeItem(key) {
-    inMemoryCredentialStore.delete(key);
+    await AsyncStorage.removeItem(key);
   },
 };
 
@@ -79,10 +81,10 @@ const createCredentialStorage = async (): Promise<CredentialStorage> => {
 
   if (!didWarnSecureStoreUnavailable) {
     didWarnSecureStoreUnavailable = true;
-    console.warn('expo-secure-store is unavailable; auth session tokens will only persist for the current app runtime.');
+    console.warn('expo-secure-store is unavailable; falling back to AsyncStorage for auth-session persistence.');
   }
 
-  return volatileCredentialStorage;
+  return asyncStorageCredentialStorage;
 };
 
 const getCredentialStorage = async (): Promise<CredentialStorage> => {
@@ -176,12 +178,39 @@ export const saveAuthSessionEnvelope = async (session: AuthSessionEnvelope): Pro
 };
 
 /**
+ * Migrate a session stored under the legacy AsyncStorage key to the current
+ * SecureStore-compatible key. Returns the raw JSON string if migration
+ * occurred, or null otherwise.
+ */
+const migrateLegacySession = async (): Promise<string | null> => {
+  try {
+    const legacyRaw = await AsyncStorage.getItem(LEGACY_AUTH_SESSION_STORAGE_KEY);
+
+    if (!legacyRaw) {
+      return null;
+    }
+
+    const credentialStorage = await getCredentialStorage();
+    await credentialStorage.setItem(AUTH_SESSION_STORAGE_KEY, legacyRaw);
+    await AsyncStorage.removeItem(LEGACY_AUTH_SESSION_STORAGE_KEY);
+
+    return legacyRaw;
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Load persisted mobile auth-session state.
  * @returns {Promise<MobileAuthSession | null>}
  */
 export const loadAuthSession = async (): Promise<MobileAuthSession | null> => {
   const credentialStorage = await getCredentialStorage();
-  const raw = await credentialStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+  let raw = await credentialStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+
+  if (!raw) {
+    raw = await migrateLegacySession();
+  }
 
   if (!raw) {
     return null;
@@ -195,11 +224,17 @@ export const loadAuthSession = async (): Promise<MobileAuthSession | null> => {
 };
 
 /**
- * Clear persisted auth-session state.
+ * Clear persisted auth-session state (both current and legacy keys).
  */
 export const clearAuthSession = async (): Promise<void> => {
   const credentialStorage = await getCredentialStorage();
   await credentialStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+
+  try {
+    await AsyncStorage.removeItem(LEGACY_AUTH_SESSION_STORAGE_KEY);
+  } catch {
+    // Legacy key may already be gone; safe to ignore.
+  }
 };
 
 /**

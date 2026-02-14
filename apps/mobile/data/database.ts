@@ -4,8 +4,9 @@
  */
 
 import * as SQLite from 'expo-sqlite';
-import type { DatabaseAdapter, ExpoDatabaseClient } from '../../../db/src';
-import { createExpoSqliteAdapter, migrateDatabase } from '../../../db/src';
+import type { DatabaseAdapter } from '../../../db/src/types';
+import { createExpoSqliteAdapter, type ExpoDatabaseClient } from '../../../db/src/expoSqliteAdapter';
+import { migrateDatabase } from '../../../db/src/migrator';
 import { schemaMigrations } from '../../../schema/src';
 
 const MOBILE_DATABASE_NAME = 'bookmarks-mobile.sqlite';

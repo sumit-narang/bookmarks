@@ -15,7 +15,7 @@ import {
   updateCollection as updateCollectionRecord,
   type CollectionRecord,
 } from '../../../collections/src';
-import type { DatabaseAdapter } from '../../../db/src';
+import type { DatabaseAdapter } from '../../../db/src/types';
 import {
   getPlace as getPlaceRecord,
   listPlaces,
