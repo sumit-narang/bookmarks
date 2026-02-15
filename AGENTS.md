@@ -4,30 +4,60 @@ Guide for AI coding agents working in this repository.
 
 ## Project Overview
 
-React Native Expo (SDK 54) mobile app for saving and organizing places/bookmarks with Google Maps integration. Written in **JavaScript** (no TypeScript). Fully client-side — no backend server. Data persisted locally via AsyncStorage.
+Monorepo workspace for the bookmarks app.
+
+- `apps/mobile`: React Native Expo (SDK 54) app (existing code in **JavaScript**)
+- `apps/backend`: Node backend foundation (new code in **TypeScript**)
+- `apps/cli`: shared CLI foundation (new code in **TypeScript**)
+- `core`, `schema`, `db`: shared persistence foundations (TypeScript)
+- Mobile runtime still uses AsyncStorage today; SQLite foundation is being prepared for cutover
+
+## Artifact Naming Rules
+
+- Do **not** use `slice n` naming in any artifact (`Slice 1`, `slice1`, `slice-1`, etc.).
+- This applies to filenames, test names, headings, inline comments, commit messages, and PR descriptions.
+- Use descriptive names based on behavior/domain instead (e.g., `foundation-schema`, `runtime-smoke`, `preferences-sync`).
 
 ## Build & Run Commands
 
 ```bash
-npm install                 # Install dependencies
-npm start                   # Start Metro bundler only
-npm run android             # Build + install + run on Android device
-npm run ios                 # Build + run on iOS simulator
-npm run web                 # Run in browser (react-native-maps unsupported)
+npm install                         # Install all workspace dependencies
+npm start                           # Start Expo Metro (apps/mobile)
+npm run android                     # Build + install + run Android app (apps/mobile)
+npm run ios                         # Build + run iOS app (apps/mobile)
+npm run web                         # Run app in browser (apps/mobile)
+npm run backend:start               # Run backend foundation service
+npm run cli -- db:init              # Initialize local CLI database
+npm run cli -- db:reset             # Reset local CLI database
+npm run cli -- db:inspect           # Inspect local CLI database tables
+npm run typecheck                   # Type-check TypeScript modules
+npm test                            # Run Node integration + runtime smoke tests
 ```
 
 **Environment requirements:**
 - Node.js (via nvm)
-- Java 17 (`JAVA_HOME=/usr/lib/jvm/java-17-openjdk` set in `.env`)
+- Java 17 (`JAVA_HOME=/usr/lib/jvm/java-17-openjdk` set in mobile `.env`)
 - `ANDROID_HOME=$HOME/Android/Sdk` in `~/.bashrc`
-- `.env` file with `EXPO_PUBLIC_GOOGLE_PLACES_API_KEY` and `JAVA_HOME`
-- Google Maps API key in `android/app/src/main/AndroidManifest.xml` as `com.google.android.geo.API_KEY` meta-data
+- `apps/mobile/.env` file with `EXPO_PUBLIC_GOOGLE_PLACES_API_KEY` and `JAVA_HOME`
+- Google Maps API key in `apps/mobile/android/app/src/main/AndroidManifest.xml` as `com.google.android.geo.API_KEY` meta-data
 
 See `building.md` for full setup instructions.
 
 ## Testing
 
-There is **no test infrastructure** in this project. No test files, no test runner, no testing libraries in dependencies.
+Integration tests exist for schema migrations, CLI/backend runtime smoke checks, and sign-out wipe behavior.
+
+```bash
+npm run typecheck
+npm test
+```
+
+- Test runner: Node built-in test runner
+- TS execution: `tsx`
+- Current suites:
+  - `tests/foundation-schema.test.ts`
+  - `tests/runtime-smoke.test.ts` (CLI + backend smoke checks)
+  - `tests/mobile-signout-wipe.test.ts` (sign-out local wipe behavior)
 
 ## Linting / Formatting
 
@@ -36,24 +66,33 @@ There is **no ESLint or Prettier** configured. No `.eslintrc`, `.prettierrc`, or
 ## Project Structure
 
 ```
-App.js                  # Entry point, providers, deep linking
-index.js                # Expo entry registration
-config/api.js           # API keys and endpoint URLs
-context/AuthContext.js   # Auth state (Google/Apple sign-in)
-navigation/AppNavigator.js  # Tab + stack navigation setup
-screens/                # Full-page screen components (8 files)
-components/             # Reusable UI components (6 files)
-modals/                 # Modal dialogs (10 files)
-data/                   # Storage, API helpers, mock data (4 files)
-utils/                  # Utility functions (1 file)
-styles/                 # StyleSheet definitions and color/typography constants
-assets/icons/           # SVG and PNG icon assets
+apps/
+  mobile/                    # Expo React Native app (JS)
+    App.js
+    index.js
+    screens/
+    components/
+    modals/
+    data/
+    context/
+    navigation/
+    styles/
+    assets/
+  backend/                   # Node backend foundation (TS)
+  cli/                       # Shared CLI foundation (TS)
+core/                        # Shared primitives (TS)
+schema/                      # SQL schema + migrations (TS)
+db/                          # SQLite adapters + migrator (TS)
+tests/                       # Integration tests (TS)
+plans/                       # Architecture and implementation plans
 ```
 
 ## Code Style Guidelines
 
 ### Language & Framework
-- **JavaScript only** — no TypeScript, no Flow
+- **Existing mobile app code** remains JavaScript (no TypeScript migration yet)
+- **New persistence/backend/CLI foundations** are TypeScript
+- Do not migrate existing mobile JS files to TS unless explicitly requested
 - **React functional components** with hooks — no class components
 - **Expo managed workflow** — use Expo SDK modules where available
 
@@ -62,6 +101,7 @@ assets/icons/           # SVG and PNG icon assets
 - **camelCase** for utility, data, config, and style files: `storage.js`, `placesApi.js`, `haptics.js`
 - **PascalCase** for style files that are screen-specific: `HomeStyles.js`, `ModalStyles.js`
 - **camelCase** for shared style constants: `colors.js`, `typography.js`
+- **TypeScript foundation modules** use descriptive camelCase filenames: `nodeSqliteAdapter.ts`, `migrator.ts`, `contracts.ts`
 
 ### Imports — Order Convention
 1. React / React Native core
@@ -156,8 +196,14 @@ export const searchPlacesGoogle = async (query) => { ... };
 ### State Management
 - **Local state** via `useState` — no Redux, no Zustand, no global store
 - **Context API** for auth state (`AuthContext`)
-- **AsyncStorage** for persistence (`data/storage.js`)
+- **AsyncStorage** currently backs mobile persistence (`apps/mobile/data/storage.js`)
+- **Sign-out wipe** is centralized in `apps/mobile/data/localPersistence.js`
+- Shared SQLite modules live under `schema/` + `db/` and are exercised via CLI/backend/tests
 - **Navigation params** for passing data between screens
+
+### Auth & Data Isolation
+- On sign out, wipe app-scoped local data (do not only unset in-memory user state)
+- Keep wipe logic in one place (`apps/mobile/data/localPersistence.js`) so SQLite file wipe can be added there during cutover
 
 ### Exports
 - **Components, screens, modals**: `export default` at file bottom

@@ -1,0 +1,25 @@
+appId: com.sumitnarang76.bookmarksmobile
+---
+- launchApp:
+    clearState: true
+- openLink: bookmarks://diagnostics
+- tapOn:
+    id: e2e-diagnostics-action-signin-user-a
+- tapOn:
+    id: e2e-diagnostics-action-set-theme-stone
+- tapOn:
+    id: e2e-diagnostics-action-refresh
+- assertVisible: "hexagonTheme: stone"
+- stopApp
+- launchApp
+- openLink: bookmarks://diagnostics
+- tapOn:
+    id: e2e-diagnostics-action-refresh
+- assertVisible: "hexagonTheme: stone"
+- assertVisible: "outboxPending: 1"
+- tapOn:
+    id: e2e-diagnostics-action-run-sync
+- tapOn:
+    id: e2e-diagnostics-action-refresh
+- assertVisible: "outboxPending: 0"
+- assertVisible: "hexagonTheme: stone"
