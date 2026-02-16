@@ -44,11 +44,3 @@ export interface AuthenticatedUser {
   picture: string | null;
   provider: 'google' | 'apple';
 }
-
-export interface HexagonPreferenceValues {
-  hexagonTheme: string;
-  hexagonVariant: string;
-  hexagonSize: number;
-  hexagonCustomDepth: number | null;
-  hexagonUseCustomDepth: boolean;
-}

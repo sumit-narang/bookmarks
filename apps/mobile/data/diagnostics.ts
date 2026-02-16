@@ -14,7 +14,6 @@ import {
   removePlaceFromCollection,
   saveGooglePlace,
 } from './storage';
-import { loadHexagonPreferences, saveHexagonPreferences } from './preferencesStorage';
 import { wipeLocalDataOnSignOut } from './localPersistence';
 import { createAuthenticatedHttpClientOptions, syncAuthenticatedData } from './syncManager';
 
@@ -29,14 +28,6 @@ interface SyncStateRow {
   remote_cursor: string | null;
   last_synced_operation_id: string | null;
   updated_at: string;
-}
-
-interface PreferenceRow {
-  hexagon_theme: string;
-  hexagon_variant: string;
-  hexagon_size: number;
-  hexagon_custom_depth: number | null;
-  hexagon_use_custom_depth: number;
 }
 
 export interface DiagnosticsSyncStateSnapshot {
@@ -64,13 +55,6 @@ export interface DiagnosticsSnapshot {
     preferences: DiagnosticsSyncStateSnapshot;
     places: DiagnosticsSyncStateSnapshot;
     collections: DiagnosticsSyncStateSnapshot;
-  };
-  preferences: {
-    hexagonTheme: string | null;
-    hexagonVariant: string | null;
-    hexagonSize: number | null;
-    hexagonCustomDepth: number | null;
-    hexagonUseCustomDepth: boolean | null;
   };
 }
 
@@ -129,7 +113,6 @@ export const getDiagnosticsSnapshot = async (): Promise<DiagnosticsSnapshot> => 
     outboxPendingCount,
     syncStateCount,
     syncStateRows,
-    preferenceRow,
   ] = await Promise.all([
     readCount(database, 'SELECT COUNT(*) AS count FROM places WHERE user_id = ?;', [userId]),
     readCount(
@@ -164,12 +147,6 @@ export const getDiagnosticsSnapshot = async (): Promise<DiagnosticsSnapshot> => 
        WHERE user_id = ?;`,
       [userId]
     ),
-    database.get<PreferenceRow>(
-      `SELECT hexagon_theme, hexagon_variant, hexagon_size, hexagon_custom_depth, hexagon_use_custom_depth
-       FROM preferences
-       WHERE user_id = ?;`,
-      [userId]
-    ),
   ]);
 
   return {
@@ -186,15 +163,6 @@ export const getDiagnosticsSnapshot = async (): Promise<DiagnosticsSnapshot> => 
       syncState: syncStateCount,
     },
     syncState: mapSyncStateRows(syncStateRows),
-    preferences: {
-      hexagonTheme: preferenceRow?.hexagon_theme ?? null,
-      hexagonVariant: preferenceRow?.hexagon_variant ?? null,
-      hexagonSize: preferenceRow ? Number(preferenceRow.hexagon_size) : null,
-      hexagonCustomDepth: preferenceRow?.hexagon_custom_depth ?? null,
-      hexagonUseCustomDepth: preferenceRow
-        ? preferenceRow.hexagon_use_custom_depth === 1
-        : null,
-    },
   };
 };
 
@@ -283,19 +251,6 @@ export const removeLatestPlaceFromAllCollections = async (): Promise<boolean> =>
   }
 
   return true;
-};
-
-/**
- * Persist a deterministic preference change for e2e assertions.
- * @param theme
- */
-export const setDiagnosticsHexagonTheme = async (theme: string): Promise<void> => {
-  const current = await loadHexagonPreferences();
-
-  await saveHexagonPreferences({
-    ...current,
-    hexagonTheme: theme,
-  });
 };
 
 /**

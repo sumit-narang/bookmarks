@@ -137,8 +137,8 @@ const PlaceOptionsModal = ({ route, navigation }) => {
             onPress={handleDelete}
             activeOpacity={0.7}
           >
-            <DeleteIcon width={24} height={24} stroke="#FF6568" />
-            <Text style={[styles.optionLabel, styles.deleteLabel]}>Delete</Text>
+            <DeleteIcon width={24} height={24} stroke="#FFFFFF" />
+            <Text style={styles.optionLabel}>Delete</Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -195,10 +195,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     color: '#FFFFFF',
-  },
-
-  deleteLabel: {
-    color: '#FF6568',
   },
 });
 

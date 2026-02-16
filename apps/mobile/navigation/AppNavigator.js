@@ -16,7 +16,6 @@ import PlaceDetailsScreen from '../screens/PlaceDetailsScreen';
 import PlacesInCollectionScreen from '../screens/PlacesInCollectionScreen';
 import SharedCollectionScreen from '../screens/SharedCollectionScreen';
 import ProfileScreen from '../screens/ProfileScreen';
-import HexagonCustomizerScreen from '../screens/HexagonCustomizerScreen';
 import DiagnosticsScreen from '../screens/DiagnosticsScreen';
 import { isE2eModeEnabled } from '../config/e2e';
 
@@ -133,7 +132,6 @@ const AppNavigator = () => {
     >
       <Stack.Screen name="Main" component={TabNavigator} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
-      <Stack.Screen name="HexagonCustomizer" component={HexagonCustomizerScreen} />
       {isE2eModeEnabled && (
         <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} />
       )}

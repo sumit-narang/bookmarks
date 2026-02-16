@@ -22,7 +22,6 @@ import {
   getDiagnosticsSnapshot,
   removeLatestPlaceFromAllCollections,
   runDiagnosticsSync,
-  setDiagnosticsHexagonTheme,
   wipeDiagnosticsLocalData,
 } from '../data/diagnostics';
 import { e2ePrimaryUserId, e2eSecondaryUserId } from '../config/e2e';
@@ -156,15 +155,6 @@ const DiagnosticsScreen = ({ navigation }) => {
               </Text>
             </View>
 
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Preferences</Text>
-              <Text style={styles.valueText} testID="e2e-diagnostics-hexagon-theme">
-                hexagonTheme: {snapshot.preferences.hexagonTheme || 'null'}
-              </Text>
-              <Text style={styles.valueText} testID="e2e-diagnostics-hexagon-variant">
-                hexagonVariant: {snapshot.preferences.hexagonVariant || 'null'}
-              </Text>
-            </View>
           </>
         )}
 
@@ -232,24 +222,6 @@ const DiagnosticsScreen = ({ navigation }) => {
             disabled={isRunningAction}
           >
             <Text style={styles.actionText}>Remove Latest Place From All Collections</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => runAction(() => setDiagnosticsHexagonTheme('stone'))}
-            testID="e2e-diagnostics-action-set-theme-stone"
-            disabled={isRunningAction}
-          >
-            <Text style={styles.actionText}>Set Hexagon Theme: stone</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => runAction(() => setDiagnosticsHexagonTheme('basalt'))}
-            testID="e2e-diagnostics-action-set-theme-basalt"
-            disabled={isRunningAction}
-          >
-            <Text style={styles.actionText}>Set Hexagon Theme: basalt</Text>
           </TouchableOpacity>
 
           <TouchableOpacity

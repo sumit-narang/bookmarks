@@ -19,9 +19,14 @@ import { useAuth } from '../context/AuthContext';
 import { e2ePrimaryUserId, e2eSecondaryUserId } from '../config/e2e';
 
 // SVG Icons
+import AccountInfoIcon from '../assets/icons/account-info.svg';
 import ImportIcon from '../assets/icons/import.svg';
+import PrivacyPolicyIcon from '../assets/icons/privacy-policy.svg';
+import HelpIcon from '../assets/icons/help.svg';
+import FeedbackIcon from '../assets/icons/feedback.svg';
 import LogoutIcon from '../assets/icons/logout.svg';
 import DeleteIcon from '../assets/icons/delete.svg';
+import ChevronForwardIcon from '../assets/icons/chevron-forward.svg';
 import GoogleIcon from '../assets/icons/google-icon.svg';
 import AppleIcon from '../assets/icons/apple-icon.svg';
 
@@ -42,9 +47,29 @@ const ProfileScreen = ({ navigation }) => {
     navigation.goBack();
   };
 
+  // Handle Account Info
+  const handleAccountInfo = () => {
+    // TODO: Navigate to account info screen
+  };
+
   // Handle import from Google
   const handleImport = () => {
     navigation.navigate('ImportGoogle');
+  };
+
+  // Handle Privacy Policy
+  const handlePrivacyPolicy = () => {
+    // TODO: Navigate to privacy policy screen
+  };
+
+  // Handle Help
+  const handleHelp = () => {
+    // TODO: Navigate to help screen
+  };
+
+  // Handle Feedback
+  const handleFeedback = () => {
+    // TODO: Navigate to feedback screen
   };
 
   // Handle Google Sign In
@@ -103,11 +128,6 @@ const ProfileScreen = ({ navigation }) => {
     );
   };
 
-  // Handle Hexagon Customizer
-  const handleHexagonCustomizer = () => {
-    navigation.navigate('HexagonCustomizer');
-  };
-
   // Handle Delete Account
   const handleDelete = () => {
     Alert.alert(
@@ -144,9 +164,20 @@ const ProfileScreen = ({ navigation }) => {
       </View>
 
       {isAuthenticated ? (
-        /* Logged In - Options Block */
-        <View style={styles.optionsBlock}>
-          {/* Import Bookmarks Option */}
+        /* Logged In - Options List */
+        <View style={styles.optionsList}>
+          {/* Account Info */}
+          <TouchableOpacity
+            style={styles.optionItem}
+            onPress={handleAccountInfo}
+            activeOpacity={0.7}
+          >
+            <AccountInfoIcon width={18} height={18} />
+            <Text style={styles.optionText}>Account Info</Text>
+            <ChevronForwardIcon width={20} height={20} style={styles.chevron} />
+          </TouchableOpacity>
+
+          {/* Import Bookmarks */}
           <TouchableOpacity
             style={styles.optionItem}
             onPress={handleImport}
@@ -156,9 +187,40 @@ const ProfileScreen = ({ navigation }) => {
             <Text style={styles.optionText}>Import Bookmarks</Text>
           </TouchableOpacity>
 
-          <View style={styles.separator} />
+          {/* Privacy Policy */}
+          <TouchableOpacity
+            style={styles.optionItem}
+            onPress={handlePrivacyPolicy}
+            activeOpacity={0.7}
+          >
+            <PrivacyPolicyIcon width={18} height={18} />
+            <Text style={styles.optionText}>Privacy Policy</Text>
+            <ChevronForwardIcon width={20} height={20} style={styles.chevron} />
+          </TouchableOpacity>
 
-          {/* Logout Option */}
+          {/* Help */}
+          <TouchableOpacity
+            style={styles.optionItem}
+            onPress={handleHelp}
+            activeOpacity={0.7}
+          >
+            <HelpIcon width={18} height={18} />
+            <Text style={styles.optionText}>Help</Text>
+            <ChevronForwardIcon width={20} height={20} style={styles.chevron} />
+          </TouchableOpacity>
+
+          {/* Feedback */}
+          <TouchableOpacity
+            style={styles.optionItem}
+            onPress={handleFeedback}
+            activeOpacity={0.7}
+          >
+            <FeedbackIcon width={18} height={18} />
+            <Text style={styles.optionText}>Feedback</Text>
+            <ChevronForwardIcon width={20} height={20} style={styles.chevron} />
+          </TouchableOpacity>
+
+          {/* Logout */}
           <TouchableOpacity
             style={styles.optionItem}
             onPress={handleLogout}
@@ -168,41 +230,26 @@ const ProfileScreen = ({ navigation }) => {
             <Text style={styles.optionText}>Logout</Text>
           </TouchableOpacity>
 
-          {/* Delete Option */}
+          {/* Delete */}
           <TouchableOpacity
             style={styles.optionItem}
             onPress={handleDelete}
             activeOpacity={0.7}
           >
             <DeleteIcon width={18} height={18} />
-            <Text style={styles.optionTextDelete}>Delete</Text>
-          </TouchableOpacity>
-
-          <View style={styles.separator} />
-
-          {/* Hexagon Customizer Option */}
-          <TouchableOpacity
-            style={styles.optionItem}
-            onPress={handleHexagonCustomizer}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="cube-outline" size={18} color={colors.textPrimary} />
-            <Text style={styles.optionText}>Hexagon Customizer</Text>
+            <Text style={styles.optionText}>Delete</Text>
           </TouchableOpacity>
 
           {isE2eMode && (
-            <>
-              <View style={styles.separator} />
-              <TouchableOpacity
-                style={styles.optionItem}
-                onPress={handleDiagnosticsPress}
-                activeOpacity={0.7}
-                testID="profile-diagnostics-button"
-              >
-                <Ionicons name="bug-outline" size={18} color={colors.textPrimary} />
-                <Text style={styles.optionText}>Diagnostics</Text>
-              </TouchableOpacity>
-            </>
+            <TouchableOpacity
+              style={styles.optionItem}
+              onPress={handleDiagnosticsPress}
+              activeOpacity={0.7}
+              testID="profile-diagnostics-button"
+            >
+              <Ionicons name="bug-outline" size={18} color={colors.textPrimary} />
+              <Text style={styles.optionText}>Diagnostics</Text>
+            </TouchableOpacity>
           )}
         </View>
       ) : (
@@ -284,15 +331,6 @@ const ProfileScreen = ({ navigation }) => {
             </View>
           )}
 
-          {/* Hexagon Customizer - Dev Tool */}
-          <TouchableOpacity
-            style={styles.devToolButton}
-            onPress={handleHexagonCustomizer}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="cube-outline" size={18} color="#888" />
-            <Text style={styles.devToolText}>Hexagon Customizer</Text>
-          </TouchableOpacity>
         </View>
       )}
     </SafeAreaView>
@@ -330,39 +368,28 @@ const styles = StyleSheet.create({
     width: 40,
   },
 
-  // Logged in - Options Block
-  optionsBlock: {
-    marginHorizontal: 16,
+  // Logged in - Options List
+  optionsList: {
     marginTop: 24,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 12,
-    overflow: 'hidden',
+    paddingHorizontal: 16,
   },
 
   optionItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: 20,
     gap: 12,
   },
 
-  separator: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    marginHorizontal: 16,
-  },
-
   optionText: {
-    fontSize: 16,
-    fontWeight: '500',
+    flex: 1,
+    fontSize: 18,
+    fontWeight: '400',
     color: colors.textPrimary,
   },
 
-  optionTextDelete: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#FE6B6B',
+  chevron: {
+    opacity: 0.9,
   },
 
   // Not logged in - Sign Up UI
