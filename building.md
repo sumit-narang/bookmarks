@@ -111,6 +111,41 @@ adb reverse tcp:8081 tcp:8081
 
 Then reopen the app.
 
+## Release Build (Physical Device)
+
+To install a standalone release APK that works without a USB/ADB connection or Metro bundler:
+
+1. **Temporarily restrict architectures** to your device's ABI to speed up the build and avoid NDK compiler issues on other ABIs. In `apps/mobile/android/gradle.properties`, change:
+
+   ```properties
+   reactNativeArchitectures=arm64-v8a
+   ```
+
+   (Check your device's ABI with `adb shell getprop ro.product.cpu.abi`.)
+
+2. **Ensure `.env` points to your deployed backend** — the release build embeds env vars at build time, so `EXPO_PUBLIC_BOOKMARKS_BACKEND_URL` must be the production/deployed URL (not `127.0.0.1`).
+
+3. **Build and install:**
+
+   ```bash
+   npx expo run:android --variant release --no-bundler
+   ```
+
+   This bundles JavaScript via Hermes, builds a release APK signed with the debug keystore, installs it on the connected device, and launches it.
+
+   The resulting APK is at:
+   ```
+   apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+   ```
+
+4. **Restore architectures** in `gradle.properties` for future emulator/debug builds:
+
+   ```properties
+   reactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64
+   ```
+
+> **Note:** The release build uses the debug keystore for signing (`android/app/debug.keystore`). For Play Store distribution, generate a dedicated release keystore — see [React Native signed APK docs](https://reactnative.dev/docs/signed-apk-android).
+
 ## Other Run Commands
 
 | Command | Description |

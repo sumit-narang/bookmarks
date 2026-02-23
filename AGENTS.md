@@ -43,6 +43,29 @@ npm test                            # Run Node integration + runtime smoke tests
 
 See `building.md` for full setup instructions.
 
+## Physical Device Development (Android)
+
+When running against a **physical Android device** (not an emulator), the standard `10.0.2.2` loopback alias does not work. Use ADB reverse proxy so the device can reach the local backend:
+
+```bash
+# 1. Connect device via wireless debugging (Developer options > Wireless debugging)
+adb connect <device-ip>:<port>
+
+# 2. Set up reverse proxy — forwards device's localhost:8787 → dev machine's localhost:8787
+adb reverse tcp:8787 tcp:8787
+
+# 3. Start the backend
+npm run backend:start
+
+# 4. In apps/mobile/.env, switch the backend URL to local:
+#    EXPO_PUBLIC_BOOKMARKS_BACKEND_URL=http://127.0.0.1:8787
+
+# 5. Start Metro
+npm start
+```
+
+Re-run `adb reverse tcp:8787 tcp:8787` any time the device reconnects. The reverse tunnel does not persist across ADB daemon restarts.
+
 ## Testing
 
 Integration tests exist for schema migrations, CLI/backend runtime smoke checks, and sign-out wipe behavior.

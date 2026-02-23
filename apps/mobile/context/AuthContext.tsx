@@ -1,12 +1,15 @@
 /**
  * AuthContext - Manages authentication state.
- * Supports Google, Apple, and dev/e2e test-user sign in with SQLite-backed session persistence.
+ * Supports Google (native), Apple, and dev/e2e test-user sign in with SQLite-backed session persistence.
  */
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import * as Google from 'expo-auth-session/providers/google';
+import {
+  GoogleSignin,
+  isErrorWithCode,
+  statusCodes,
+} from '@react-native-google-signin/google-signin';
 import * as AppleAuthentication from 'expo-apple-authentication';
-import * as WebBrowser from 'expo-web-browser';
 import { createAuthHttpClient } from '../../../auth/src/httpClient';
 import { BOOKMARKS_BACKEND_URL } from '../config/backend';
 import { buildInsecureTestIdentityToken, e2ePrimaryUserId, isE2eModeEnabled } from '../config/e2e';
@@ -25,7 +28,14 @@ import {
 import { resetActiveUserId, setActiveUserId } from '../data/runtimeSession';
 import type { AuthenticatedUser } from '../data/types';
 
-WebBrowser.maybeCompleteAuthSession();
+// Configure native Google Sign-In
+const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+const googleAndroidClientId = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID;
+
+GoogleSignin.configure({
+  webClientId: googleWebClientId || undefined,
+  scopes: ['profile', 'email'],
+});
 
 interface AuthContextValue {
   user: AuthenticatedUser | null;
@@ -51,12 +61,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    clientId: 'YOUR_EXPO_CLIENT_ID.apps.googleusercontent.com',
-    iosClientId: 'YOUR_IOS_CLIENT_ID.apps.googleusercontent.com',
-    androidClientId: 'YOUR_ANDROID_CLIENT_ID.apps.googleusercontent.com',
-    webClientId: 'YOUR_WEB_CLIENT_ID.apps.googleusercontent.com',
-  });
+  const hasGoogleClientConfiguration = Boolean(googleAndroidClientId || googleWebClientId);
 
   const authClient = createAuthHttpClient({ baseUrl: BOOKMARKS_BACKEND_URL });
   const isDevTestAuthDisabled = process.env.EXPO_PUBLIC_BOOKMARKS_DEV_TEST_AUTH === '0';
@@ -64,6 +69,16 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const defaultTestUserId = isE2eModeEnabled
     ? e2ePrimaryUserId
     : process.env.EXPO_PUBLIC_BOOKMARKS_DEV_TEST_USER || 'dev-user';
+
+  useEffect(() => {
+    if (hasGoogleClientConfiguration) {
+      return;
+    }
+
+    console.warn(
+      'Google sign in is not configured. Set EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID (and optionally EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) in apps/mobile/.env.'
+    );
+  }, [hasGoogleClientConfiguration]);
 
   useEffect(() => {
     const bootstrapUser = async () => {
@@ -98,21 +113,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
     void bootstrapUser();
   }, []);
-
-  useEffect(() => {
-    if (response?.type !== 'success') {
-      return;
-    }
-
-    const accessToken = response.authentication?.accessToken;
-
-    if (!accessToken) {
-      console.error('Google auth succeeded but no access token was returned.');
-      return;
-    }
-
-    void fetchGoogleUserInfo(accessToken);
-  }, [response]);
 
   const exchangeBackendSession = async (
     userData: AuthenticatedUser,
@@ -157,40 +157,57 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     }
   };
 
-  const fetchGoogleUserInfo = async (accessToken: string): Promise<void> => {
-    try {
-      const responseValue = await fetch('https://www.googleapis.com/userinfo/v2/me', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      const userInfo = (await responseValue.json()) as {
-        id?: string;
-        email?: string;
-        name?: string;
-        picture?: string;
-      };
+  const signInWithGoogle = async (): Promise<void> => {
+    if (!hasGoogleClientConfiguration) {
+      throw new Error('Google sign in is not configured. Missing Google OAuth client IDs.');
+    }
 
-      if (!userInfo.id) {
-        throw new Error('Google user info response is missing id.');
+    try {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const signInResult = await GoogleSignin.signIn();
+
+      const userInfo = signInResult.data;
+      if (!userInfo || !userInfo.user) {
+        throw new Error('Google sign in succeeded but no user data was returned.');
+      }
+
+      const googleUser = userInfo.user;
+
+      // Get the access token to send to the backend for verification
+      const tokens = await GoogleSignin.getTokens();
+      const accessToken = tokens.accessToken;
+
+      if (!accessToken) {
+        throw new Error('Google sign in succeeded but no access token was returned.');
       }
 
       const userData: AuthenticatedUser = {
-        id: userInfo.id,
-        email: userInfo.email ?? null,
-        name: userInfo.name ?? 'Google User',
-        picture: userInfo.picture ?? null,
+        id: googleUser.id,
+        email: googleUser.email ?? null,
+        name: googleUser.name ?? 'Google User',
+        picture: googleUser.photo ?? null,
         provider: 'google',
       };
 
       await saveUser(userData, accessToken);
     } catch (error) {
-      console.error('Error fetching Google user info:', error);
-    }
-  };
+      if (isErrorWithCode(error)) {
+        if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+          console.log('Google sign in canceled');
+          return;
+        }
 
-  const signInWithGoogle = async (): Promise<void> => {
-    try {
-      await promptAsync();
-    } catch (error) {
+        if (error.code === statusCodes.IN_PROGRESS) {
+          console.log('Google sign in already in progress');
+          return;
+        }
+
+        if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+          console.error('Google Play Services not available or outdated');
+          throw new Error('Google Play Services is required for Google sign in.');
+        }
+      }
+
       console.error('Google sign in error:', error);
       throw error;
     }
@@ -297,6 +314,13 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         }
       }
 
+      // Sign out of native Google session if active
+      try {
+        await GoogleSignin.signOut();
+      } catch {
+        // Ignore — user may not have signed in with Google
+      }
+
       await wipeLocalDataOnSignOut(undefined, { wipeDatabase: true });
       await clearAuthSession();
       resetActiveUserId();
@@ -320,7 +344,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         signInWithApple,
         signInWithTestUser,
         signOut,
-        googleAuthRequest: request,
+        googleAuthRequest: hasGoogleClientConfiguration ? {} : null,
       }}
     >
       {children}
