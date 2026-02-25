@@ -2,21 +2,79 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible:
+      id: tab-map
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-signin-user-b
+    direction: DOWN
+    timeout: 60000
 - tapOn:
-    id: e2e-diagnostics-action-signin-user-a
+    id: e2e-diagnostics-action-signin-user-b
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-signin-user-b
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-create-place
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-create-place
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-create-place
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-create-collection-with-place
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-create-collection-with-place
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-create-collection-with-place
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
-- assertVisible: "collections: 2"
-- assertVisible: "collection_places: 2"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-collections
+    direction: UP
+    timeout: 60000
+- assertVisible: "collections: 1"
+- assertVisible: "collection_places: 1"
 - stopApp
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: tab-map
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
-- assertVisible: "collections: 2"
-- assertVisible: "collection_places: 2"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-collections
+    direction: UP
+    timeout: 60000
+- assertVisible: "collections: 1"
+- assertVisible: "collection_places: 1"

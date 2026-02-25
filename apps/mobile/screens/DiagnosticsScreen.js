@@ -24,7 +24,16 @@ import {
   runDiagnosticsSync,
   wipeDiagnosticsLocalData,
 } from '../data/diagnostics';
-import { e2ePrimaryUserId, e2eSecondaryUserId } from '../config/e2e';
+import {
+  e2ePrimaryUserId,
+  e2eSecondaryUserId,
+  e2eTertiaryUserId,
+  e2eQuaternaryUserId,
+  e2eQuinaryUserId,
+  e2eSenaryUserId,
+  e2eSeptenaryUserId,
+  e2eOctonaryUserId,
+} from '../config/e2e';
 import { colors } from '../styles/colors';
 
 const DiagnosticsScreen = ({ navigation }) => {
@@ -36,11 +45,26 @@ const DiagnosticsScreen = ({ navigation }) => {
   const loadSnapshot = async () => {
     setIsLoadingSnapshot(true);
 
+    let lastError = null;
+
     try {
-      const nextSnapshot = await getDiagnosticsSnapshot();
-      setSnapshot(nextSnapshot);
-    } catch (error) {
-      console.error('Error loading diagnostics snapshot:', error);
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const nextSnapshot = await getDiagnosticsSnapshot();
+          setSnapshot(nextSnapshot);
+          return;
+        } catch (error) {
+          lastError = error;
+
+          if (attempt < 3) {
+            await new Promise((resolve) => {
+              setTimeout(resolve, 300 * attempt);
+            });
+          }
+        }
+      }
+
+      console.error('Error loading diagnostics snapshot:', lastError);
       Alert.alert('Diagnostics Error', 'Unable to load diagnostics snapshot.');
     } finally {
       setIsLoadingSnapshot(false);
@@ -69,6 +93,10 @@ const DiagnosticsScreen = ({ navigation }) => {
     } finally {
       setIsRunningAction(false);
     }
+  };
+
+  const signInForDiagnostics = async (userId) => {
+    await signInWithTestUser(userId);
   };
 
   const handleBack = () => {
@@ -172,7 +200,7 @@ const DiagnosticsScreen = ({ navigation }) => {
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => runAction(() => signInWithTestUser(e2ePrimaryUserId))}
+            onPress={() => runAction(() => signInForDiagnostics(e2ePrimaryUserId))}
             testID="e2e-diagnostics-action-signin-user-a"
             disabled={isRunningAction}
           >
@@ -181,11 +209,65 @@ const DiagnosticsScreen = ({ navigation }) => {
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => runAction(() => signInWithTestUser(e2eSecondaryUserId))}
+            onPress={() => runAction(() => signInForDiagnostics(e2eSecondaryUserId))}
             testID="e2e-diagnostics-action-signin-user-b"
             disabled={isRunningAction}
           >
             <Text style={styles.actionText}>Sign In User B</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eTertiaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-c"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User C</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eQuaternaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-d"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User D</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eQuinaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-e"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User E</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eSenaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-f"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User F</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eSeptenaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-g"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User G</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eOctonaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-h"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User H</Text>
           </TouchableOpacity>
 
           <TouchableOpacity

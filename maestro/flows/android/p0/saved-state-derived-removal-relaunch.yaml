@@ -2,24 +2,102 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible:
+      id: tab-map
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-signin-user-g
+    direction: DOWN
+    timeout: 60000
 - tapOn:
-    id: e2e-diagnostics-action-signin-user-a
+    id: e2e-diagnostics-action-signin-user-g
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-signin-user-g
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-create-place
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-create-place
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-create-place
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-create-collection-with-place
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-create-collection-with-place
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-create-collection-with-place
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
-- assertVisible: "savedPlaces: 2"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-saved-places
+    direction: UP
+    timeout: 60000
+- assertVisible: "savedPlaces: 1"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-remove-latest-place-memberships
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-remove-latest-place-memberships
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-remove-latest-place-memberships
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
-- assertVisible: "savedPlaces: 1"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-saved-places
+    direction: UP
+    timeout: 60000
+- assertVisible: "savedPlaces: 0"
 - stopApp
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: tab-map
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
-- assertVisible: "savedPlaces: 1"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-saved-places
+    direction: UP
+    timeout: 60000
+- assertVisible: "savedPlaces: 0"

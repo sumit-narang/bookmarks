@@ -2,16 +2,70 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible:
+      id: tab-map
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-signin-user-d
+    direction: DOWN
+    timeout: 60000
 - tapOn:
-    id: e2e-diagnostics-action-signin-user-a
+    id: e2e-diagnostics-action-signin-user-d
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-signin-user-d
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-create-place
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-create-place
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-create-place
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-outbox-pending
+    direction: UP
+    timeout: 60000
 - assertVisible: "outboxPending: 1"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-run-sync
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-run-sync
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-run-sync
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-outbox-pending
+    direction: UP
+    timeout: 60000
 - assertVisible: "outboxPending: 0"

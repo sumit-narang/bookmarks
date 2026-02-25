@@ -164,7 +164,7 @@ When running the local backend in development (`npm run backend:start`), test au
 - Optional: set `EXPO_PUBLIC_BOOKMARKS_DEV_TEST_AUTH=0` to hide the dev test-auth button.
 - Production remains protected: backend rejects test auth when `NODE_ENV=production`.
 
-## Mobile E2E (Maestro, Android)
+## Mobile E2E (maestro-runner, Android)
 
 1. Enable e2e mode in `apps/mobile/.env`:
 
@@ -185,7 +185,20 @@ npm run mobile:e2e:backend:start
 npm run mobile:e2e:android
 ```
 
-Artifacts (JUnit, logs, diagnostics capture on failure) are written under:
+The runner uses `maestro-runner` with a reliability-first parallelism cap.
+
+By default, worker count is capped at `4` via `E2E_MAX_PARALLEL` to reduce emulator instability, while still auto-scaling up to available/startable devices.
+
+Optional overrides:
+
+```bash
+E2E_MAX_PARALLEL=4 npm run mobile:e2e:android   # default reliability cap
+E2E_PARALLEL=6 npm run mobile:e2e:android       # force exact worker count
+E2E_WAIT_FOR_IDLE_TIMEOUT=100 npm run mobile:e2e:android
+E2E_BOOT_TIMEOUT=300 npm run mobile:e2e:android
+```
+
+Artifacts (report JSON/HTML/JUnit, logs, diagnostics capture on failure) are written under:
 
 ```bash
 .bookmarks/e2e-artifacts/

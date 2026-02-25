@@ -95,9 +95,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
           setActiveUserId(storedUser.id);
           setUser(storedUser);
-          void syncAuthenticatedData().catch((error) => {
-            console.error('Error running initial authenticated sync:', error);
-          });
+
+          if (!isE2eModeEnabled) {
+            void syncAuthenticatedData().catch((error) => {
+              console.error('Error running initial authenticated sync:', error);
+            });
+          }
         } else {
           await clearAuthSession();
           resetActiveUserId();
@@ -147,9 +150,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       setActiveUserId(authenticatedUser.id);
       setUser(authenticatedUser);
 
-      void syncAuthenticatedData().catch((error) => {
-        console.error('Error running post-login sync:', error);
-      });
+      if (!isE2eModeEnabled) {
+        void syncAuthenticatedData().catch((error) => {
+          console.error('Error running post-login sync:', error);
+        });
+      }
     } catch (error) {
       console.error('Error saving user:', error);
       await clearAuthSession();
@@ -290,10 +295,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       setActiveUserId(authenticatedUser.id);
       setUser(authenticatedUser);
 
-      try {
-        await syncAuthenticatedData();
-      } catch (error) {
-        console.error('Error running test-user sync:', error);
+      if (!isE2eModeEnabled) {
+        try {
+          await syncAuthenticatedData();
+        } catch (error) {
+          console.error('Error running test-user sync:', error);
+        }
       }
     } catch (error) {
       console.error('Error signing in test user:', error);

@@ -2,23 +2,86 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible:
+      id: tab-map
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-signin-user-h
+    direction: DOWN
+    timeout: 60000
 - tapOn:
-    id: e2e-diagnostics-action-signin-user-a
+    id: e2e-diagnostics-action-signin-user-h
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-signin-user-h
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-create-place
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-create-place
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-create-place
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-signout
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-signout
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-signout
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-active-user-id
+    direction: UP
+    timeout: 60000
 - assertVisible: "activeUserId: local-guest-user"
 - assertVisible: "hasAuthSession: false"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-places
+    direction: UP
+    timeout: 60000
 - assertVisible: "places: 0"
 - assertVisible: "collections: 0"
 - stopApp
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: tab-map
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-active-user-id
+    direction: UP
+    timeout: 60000
 - assertVisible: "activeUserId: local-guest-user"
 - assertVisible: "hasAuthSession: false"
