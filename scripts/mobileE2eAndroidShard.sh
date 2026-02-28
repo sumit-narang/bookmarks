@@ -46,6 +46,13 @@ for attempt in $(seq 1 90); do
   sleep 2
 done
 
+adb kill-server || true
+adb start-server
+adb devices # confirm emulator online
+
+# Wait for emulator to boot
+timeout 300 bash -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 5; done'
+
 adb reverse tcp:8081 tcp:8081
 adb reverse tcp:8787 tcp:8787
 
