@@ -140,7 +140,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
-            #!/bin/bash
+            bash << 'BASH_SCRIPT'
             set -euo pipefail
 
             mkdir -p "${E2E_ARTIFACT_ROOT}"
@@ -219,6 +219,7 @@ jobs:
                 exit 1
                 ;;
             esac
+            BASH_SCRIPT
 
       - name: Upload e2e artifacts
         if: always()
