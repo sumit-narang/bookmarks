@@ -102,12 +102,19 @@ jobs:
         run: |
           curl -fsSL "https://open.devicelab.dev/install/maestro-runner" | bash
 
-          if ! command -v maestro-runner >/dev/null 2>&1 && [ -x "$HOME/.local/bin/maestro-runner" ]; then
+          if command -v maestro-runner >/dev/null 2>&1; then
+            echo "$(dirname $(command -v maestro-runner))" >> "$GITHUB_PATH"
+          elif [ -x "$HOME/.maestro-runner/bin/maestro-runner" ]; then
+            export PATH="$HOME/.maestro-runner/bin:$PATH"
+            echo "$HOME/.maestro-runner/bin" >> "$GITHUB_PATH"
+          elif [ -x "$HOME/.local/bin/maestro-runner" ]; then
             export PATH="$HOME/.local/bin:$PATH"
             echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          else
+            echo "maestro-runner not found after installation!"
+            exit 1
           fi
 
-          command -v maestro-runner
           maestro-runner --version
 
       - name: Write mobile e2e env
