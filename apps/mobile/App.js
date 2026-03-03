@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
-import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, Platform, LogBox } from 'react-native';
 import * as Linking from 'expo-linking';
 
 import AppNavigator from './navigation/AppNavigator';
@@ -14,6 +14,10 @@ import { initializeStorage } from './data/storage';
 import { colors } from './styles/colors';
 import { AuthProvider } from './context/AuthContext';
 import { isE2eModeEnabled } from './config/e2e';
+
+if (isE2eModeEnabled) {
+  LogBox.ignoreAllLogs(true);
+}
 
 // Deep linking configuration
 const prefix = Linking.createURL('/');

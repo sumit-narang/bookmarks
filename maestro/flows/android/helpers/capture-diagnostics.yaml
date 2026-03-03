@@ -1,11 +1,11 @@
 appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp
+- openLink: bookmarks://diagnostics
 - extendedWaitUntil:
     visible:
-      id: tab-map
+      id: e2e-diagnostics-action-refresh
     timeout: 60000
-- openLink: bookmarks://diagnostics
 - tapOn:
     id: e2e-diagnostics-action-refresh
 - assertVisible:

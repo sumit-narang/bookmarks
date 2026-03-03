@@ -2,11 +2,11 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
+- openLink: bookmarks://diagnostics
 - extendedWaitUntil:
     visible:
-      id: tab-map
+      id: e2e-diagnostics-action-refresh
     timeout: 60000
-- openLink: bookmarks://diagnostics
 - scrollUntilVisible:
     element:
       id: e2e-diagnostics-action-signin-user-f
