@@ -2,7 +2,7 @@
  * DiagnosticsScreen - Dev/e2e persistence observability and deterministic actions.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -36,11 +36,12 @@ import {
 } from '../config/e2e';
 import { colors } from '../styles/colors';
 
-const DiagnosticsScreen = ({ navigation }) => {
+const DiagnosticsScreen = ({ navigation, route }) => {
   const { signInWithTestUser, signOut } = useAuth();
   const [snapshot, setSnapshot] = useState(null);
   const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(true);
   const [isRunningAction, setIsRunningAction] = useState(false);
+  const lastHandledRouteActionRef = useRef(null);
 
   const loadSnapshot = async () => {
     setIsLoadingSnapshot(true);
@@ -94,6 +95,43 @@ const DiagnosticsScreen = ({ navigation }) => {
       setIsRunningAction(false);
     }
   };
+
+  const runRouteAction = async (action) => {
+    switch (action) {
+      case 'set-theme-stone':
+        await runAction(() => setDiagnosticsHexagonTheme('stone'));
+        break;
+      case 'set-theme-basalt':
+        await runAction(() => setDiagnosticsHexagonTheme('basalt'));
+        break;
+      case 'run-sync':
+        await runAction(runDiagnosticsSync);
+        break;
+      case 'refresh':
+        await runAction(loadSnapshot);
+        break;
+      default:
+        break;
+    }
+  };
+
+  useEffect(() => {
+    const action = route?.params?.action;
+
+    if (!action || typeof action !== 'string') {
+      return;
+    }
+
+    const nonce = route?.params?.nonce;
+    const routeActionKey = `${action}:${typeof nonce === 'string' ? nonce : ''}`;
+
+    if (lastHandledRouteActionRef.current === routeActionKey) {
+      return;
+    }
+
+    lastHandledRouteActionRef.current = routeActionKey;
+    void runRouteAction(action);
+  }, [route?.params?.action, route?.params?.nonce]);
 
   const signInForDiagnostics = async (userId) => {
     await signInWithTestUser(userId);

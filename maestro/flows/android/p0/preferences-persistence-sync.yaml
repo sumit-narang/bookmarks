@@ -29,17 +29,10 @@ appId: com.sumitnarang76.bookmarksmobile
       id: e2e-diagnostics-action-signin-user-e
       enabled: true
     timeout: 60000
-- scrollUntilVisible:
-    element:
-      id: e2e-diagnostics-action-set-theme-stone
-    direction: DOWN
-    timeout: 60000
-- tapOn:
-    id: e2e-diagnostics-action-set-theme-stone
+- openLink: bookmarks://diagnostics?action=set-theme-stone&nonce=preferences-initial
 - extendedWaitUntil:
     visible:
-      id: e2e-diagnostics-action-set-theme-stone
-      enabled: true
+      id: e2e-diagnostics-action-refresh
     timeout: 60000
 - scrollUntilVisible:
     element:
