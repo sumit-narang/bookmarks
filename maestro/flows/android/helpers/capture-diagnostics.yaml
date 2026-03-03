@@ -1,6 +1,10 @@
 appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: e2e-home-root
+    timeout: 60000
 - openLink: bookmarks://diagnostics
 - extendedWaitUntil:
     visible:

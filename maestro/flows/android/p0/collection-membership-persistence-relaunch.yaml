@@ -2,6 +2,10 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible:
+      id: e2e-home-root
+    timeout: 60000
 - openLink: bookmarks://diagnostics
 - extendedWaitUntil:
     visible:
@@ -59,6 +63,10 @@ appId: com.sumitnarang76.bookmarksmobile
 - assertVisible: "collection_places: 1"
 - stopApp
 - launchApp
+- extendedWaitUntil:
+    visible:
+      id: e2e-home-root
+    timeout: 60000
 - openLink: bookmarks://diagnostics
 - extendedWaitUntil:
     visible:
