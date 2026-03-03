@@ -2,6 +2,9 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp
 - tapOn:
+    text: "Close app"
+    optional: true
+- tapOn:
     text: "Wait"
     optional: true
 - extendedWaitUntil:

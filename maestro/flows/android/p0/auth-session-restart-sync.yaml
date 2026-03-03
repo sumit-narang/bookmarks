@@ -3,6 +3,9 @@ appId: com.sumitnarang76.bookmarksmobile
 - launchApp:
     clearState: true
 - tapOn:
+    text: "Close app"
+    optional: true
+- tapOn:
     text: "Wait"
     optional: true
 - extendedWaitUntil:
@@ -42,6 +45,9 @@ appId: com.sumitnarang76.bookmarksmobile
 - assertVisible: "hasAuthSession: true"
 - stopApp
 - launchApp
+- tapOn:
+    text: "Close app"
+    optional: true
 - tapOn:
     text: "Wait"
     optional: true

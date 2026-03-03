@@ -56,7 +56,10 @@ timeout 300 bash -c 'until adb get-state 2>/dev/null | grep -q "device"; do adb 
 timeout 300 bash -c 'until adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r" | grep -m 1 "^1$"; do adb reconnect offline >/dev/null 2>&1 || true; sleep 5; done'
 
 # Suppress system ANR/crash dialogs that can cover the app during CI startup.
+# Some flags live under secure on certain Android builds, so set both secure/global where possible.
+adb shell settings put secure anr_show_background 0 >/dev/null 2>&1 || true
 adb shell settings put global anr_show_background 0 >/dev/null 2>&1 || true
+adb shell settings put secure show_first_crash_dialog 0 >/dev/null 2>&1 || true
 adb shell settings put global show_first_crash_dialog 0 >/dev/null 2>&1 || true
 adb shell settings put global show_first_crash_dialog_dev_option 0 >/dev/null 2>&1 || true
 adb shell settings put global show_app_error_dialog 0 >/dev/null 2>&1 || true
