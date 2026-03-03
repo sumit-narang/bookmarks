@@ -46,12 +46,21 @@ for attempt in $(seq 1 90); do
   sleep 2
 done
 
-adb kill-server || true
-adb start-server
 adb devices # confirm emulator online
 
-# Wait for emulator to boot
-timeout 300 bash -c 'until adb shell getprop sys.boot_completed | grep -m 1 "1"; do sleep 5; done'
+# Wait for adb to report a healthy online device without restarting adb server.
+# Restarting adb here can race with emulator startup in CI.
+timeout 300 bash -c 'until adb get-state 2>/dev/null | grep -q "device"; do adb reconnect offline >/dev/null 2>&1 || true; sleep 2; done'
+
+# Wait for emulator boot completion signal
+timeout 300 bash -c 'until adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r" | grep -m 1 "^1$"; do adb reconnect offline >/dev/null 2>&1 || true; sleep 5; done'
+
+# Suppress system ANR/crash dialogs that can cover the app during CI startup.
+adb shell settings put global anr_show_background 0 >/dev/null 2>&1 || true
+adb shell settings put global show_first_crash_dialog 0 >/dev/null 2>&1 || true
+adb shell settings put global show_first_crash_dialog_dev_option 0 >/dev/null 2>&1 || true
+adb shell settings put global show_app_error_dialog 0 >/dev/null 2>&1 || true
+adb shell settings put global show_restart_in_crash_dialog 0 >/dev/null 2>&1 || true
 
 adb reverse tcp:8081 tcp:8081
 adb reverse tcp:8787 tcp:8787

@@ -140,7 +140,7 @@ jobs:
           target: google_apis
           profile: pixel_5
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 6144
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 6144 -no-snapshot-load -no-snapshot-save
           script: bash scripts/mobileE2eAndroidShard.sh
 
       - name: Upload e2e artifacts

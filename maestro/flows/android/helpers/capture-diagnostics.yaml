@@ -1,6 +1,9 @@
 appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp
+- tapOn:
+    text: "Wait"
+    optional: true
 - extendedWaitUntil:
     visible:
       id: e2e-home-root

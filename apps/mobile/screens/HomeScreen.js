@@ -148,7 +148,7 @@ const HomeScreen = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.container} testID="e2e-home-root">
+    <View style={styles.container} testID="e2e-home-root" collapsable={false}>
       <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}

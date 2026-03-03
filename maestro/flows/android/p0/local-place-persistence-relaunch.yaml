@@ -2,6 +2,9 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
+- tapOn:
+    text: "Wait"
+    optional: true
 - extendedWaitUntil:
     visible:
       id: e2e-home-root
@@ -55,6 +58,9 @@ appId: com.sumitnarang76.bookmarksmobile
 - assertVisible: "places: 1"
 - stopApp
 - launchApp
+- tapOn:
+    text: "Wait"
+    optional: true
 - extendedWaitUntil:
     visible:
       id: e2e-home-root
