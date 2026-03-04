@@ -24,6 +24,7 @@ import {
   runDiagnosticsSync,
   wipeDiagnosticsLocalData,
 } from '../data/diagnostics';
+import { loadHexagonPreferences, saveHexagonPreferences } from '../data/preferencesStorage';
 import {
   e2ePrimaryUserId,
   e2eSecondaryUserId,
@@ -42,6 +43,15 @@ const DiagnosticsScreen = ({ navigation, route }) => {
   const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(true);
   const [isRunningAction, setIsRunningAction] = useState(false);
   const lastHandledRouteActionRef = useRef(null);
+
+  const persistDiagnosticsHexagonTheme = async (theme) => {
+    const current = await loadHexagonPreferences();
+
+    await saveHexagonPreferences({
+      ...current,
+      hexagonTheme: theme,
+    });
+  };
 
   const loadSnapshot = async () => {
     setIsLoadingSnapshot(true);
@@ -99,10 +109,10 @@ const DiagnosticsScreen = ({ navigation, route }) => {
   const runRouteAction = async (action) => {
     switch (action) {
       case 'set-theme-stone':
-        await runAction(() => setDiagnosticsHexagonTheme('stone'));
+        await runAction(() => persistDiagnosticsHexagonTheme('stone'));
         break;
       case 'set-theme-basalt':
-        await runAction(() => setDiagnosticsHexagonTheme('basalt'));
+        await runAction(() => persistDiagnosticsHexagonTheme('basalt'));
         break;
       case 'run-sync':
         await runAction(runDiagnosticsSync);
@@ -342,6 +352,24 @@ const DiagnosticsScreen = ({ navigation, route }) => {
             disabled={isRunningAction}
           >
             <Text style={styles.actionText}>Remove Latest Place From All Collections</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => persistDiagnosticsHexagonTheme('stone'))}
+            testID="e2e-diagnostics-action-set-theme-stone"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Set Hexagon Theme: stone</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => persistDiagnosticsHexagonTheme('basalt'))}
+            testID="e2e-diagnostics-action-set-theme-basalt"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Set Hexagon Theme: basalt</Text>
           </TouchableOpacity>
 
           <TouchableOpacity

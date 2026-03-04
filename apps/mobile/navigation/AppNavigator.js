@@ -31,6 +31,8 @@ import CollectionOptionsModal from '../modals/CollectionOptionsModal';
 import EditSavedOptionsModal from '../modals/EditSavedOptionsModal';
 import EditPlaceCollectionsModal from '../modals/EditPlaceCollectionsModal';
 
+const isDiagnosticsEnabled = isE2eModeEnabled || __DEV__;
+
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
@@ -132,7 +134,7 @@ const AppNavigator = () => {
     >
       <Stack.Screen name="Main" component={TabNavigator} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
-      {isE2eModeEnabled && (
+      {isDiagnosticsEnabled && (
         <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} />
       )}
       <Stack.Screen name="SharedCollection" component={SharedCollectionScreen} />
