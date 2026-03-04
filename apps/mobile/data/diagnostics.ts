@@ -3,6 +3,7 @@
  */
 
 import { createHttpRequest, readJsonResponse } from '../../../http/src';
+import { getOrCreatePreferences, setPreferences } from '../../../preferences/src';
 import { getActiveUserId, resetActiveUserId } from './runtimeSession';
 import { clearAuthSession, loadAuthSession } from './authSession';
 import { getDatabase } from './database';
@@ -55,6 +56,10 @@ export interface DiagnosticsSnapshot {
     preferences: DiagnosticsSyncStateSnapshot;
     places: DiagnosticsSyncStateSnapshot;
     collections: DiagnosticsSyncStateSnapshot;
+  };
+  preferences: {
+    hexagonTheme: string | null;
+    hexagonVariant: string | null;
   };
 }
 
@@ -113,6 +118,7 @@ export const getDiagnosticsSnapshot = async (): Promise<DiagnosticsSnapshot> => 
     outboxPendingCount,
     syncStateCount,
     syncStateRows,
+    preferences,
   ] = await Promise.all([
     readCount(database, 'SELECT COUNT(*) AS count FROM places WHERE user_id = ?;', [userId]),
     readCount(
@@ -147,6 +153,7 @@ export const getDiagnosticsSnapshot = async (): Promise<DiagnosticsSnapshot> => 
        WHERE user_id = ?;`,
       [userId]
     ),
+    getOrCreatePreferences(database, userId),
   ]);
 
   return {
@@ -163,6 +170,10 @@ export const getDiagnosticsSnapshot = async (): Promise<DiagnosticsSnapshot> => 
       syncState: syncStateCount,
     },
     syncState: mapSyncStateRows(syncStateRows),
+    preferences: {
+      hexagonTheme: preferences.hexagonTheme,
+      hexagonVariant: preferences.hexagonVariant,
+    },
   };
 };
 
@@ -251,6 +262,27 @@ export const removeLatestPlaceFromAllCollections = async (): Promise<boolean> =>
   }
 
   return true;
+};
+
+/**
+ * Persist a deterministic preference change for e2e assertions.
+ * @param theme
+ */
+export const setDiagnosticsHexagonTheme = async (theme: string): Promise<void> => {
+  const database = await getDatabase();
+  const userId = getActiveUserId();
+  const current = await getOrCreatePreferences(database, userId);
+
+  await setPreferences(database, {
+    userId,
+    patch: {
+      hexagonTheme: theme,
+      hexagonVariant: current.hexagonVariant,
+      hexagonSize: current.hexagonSize,
+      hexagonCustomDepth: current.hexagonCustomDepth,
+      hexagonUseCustomDepth: current.hexagonUseCustomDepth,
+    },
+  });
 };
 
 /**

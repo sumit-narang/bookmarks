@@ -22,9 +22,9 @@ import {
   getDiagnosticsSnapshot,
   removeLatestPlaceFromAllCollections,
   runDiagnosticsSync,
+  setDiagnosticsHexagonTheme,
   wipeDiagnosticsLocalData,
 } from '../data/diagnostics';
-import { loadHexagonPreferences, saveHexagonPreferences } from '../data/preferencesStorage';
 import {
   e2ePrimaryUserId,
   e2eSecondaryUserId,
@@ -43,15 +43,6 @@ const DiagnosticsScreen = ({ navigation, route }) => {
   const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(true);
   const [isRunningAction, setIsRunningAction] = useState(false);
   const lastHandledRouteActionRef = useRef(null);
-
-  const persistDiagnosticsHexagonTheme = async (theme) => {
-    const current = await loadHexagonPreferences();
-
-    await saveHexagonPreferences({
-      ...current,
-      hexagonTheme: theme,
-    });
-  };
 
   const loadSnapshot = async () => {
     setIsLoadingSnapshot(true);
@@ -109,10 +100,10 @@ const DiagnosticsScreen = ({ navigation, route }) => {
   const runRouteAction = async (action) => {
     switch (action) {
       case 'set-theme-stone':
-        await runAction(() => persistDiagnosticsHexagonTheme('stone'));
+        await runAction(() => setDiagnosticsHexagonTheme('stone'));
         break;
       case 'set-theme-basalt':
-        await runAction(() => persistDiagnosticsHexagonTheme('basalt'));
+        await runAction(() => setDiagnosticsHexagonTheme('basalt'));
         break;
       case 'run-sync':
         await runAction(runDiagnosticsSync);
@@ -231,6 +222,15 @@ const DiagnosticsScreen = ({ navigation, route }) => {
               </Text>
             </View>
 
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Preferences</Text>
+              <Text style={styles.valueText} testID="e2e-diagnostics-hexagon-theme">
+                hexagonTheme: {snapshot.preferences.hexagonTheme || 'null'}
+              </Text>
+              <Text style={styles.valueText} testID="e2e-diagnostics-hexagon-variant">
+                hexagonVariant: {snapshot.preferences.hexagonVariant || 'null'}
+              </Text>
+            </View>
           </>
         )}
 
@@ -356,7 +356,7 @@ const DiagnosticsScreen = ({ navigation, route }) => {
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => runAction(() => persistDiagnosticsHexagonTheme('stone'))}
+            onPress={() => runAction(() => setDiagnosticsHexagonTheme('stone'))}
             testID="e2e-diagnostics-action-set-theme-stone"
             disabled={isRunningAction}
           >
@@ -365,7 +365,7 @@ const DiagnosticsScreen = ({ navigation, route }) => {
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => runAction(() => persistDiagnosticsHexagonTheme('basalt'))}
+            onPress={() => runAction(() => setDiagnosticsHexagonTheme('basalt'))}
             testID="e2e-diagnostics-action-set-theme-basalt"
             disabled={isRunningAction}
           >
