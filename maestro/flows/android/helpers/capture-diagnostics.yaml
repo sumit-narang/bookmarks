@@ -1,7 +1,21 @@
 appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp
+- tapOn:
+    text: "Close app"
+    optional: true
+- tapOn:
+    text: "Wait"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: e2e-home-root
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-refresh
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
 - assertVisible:

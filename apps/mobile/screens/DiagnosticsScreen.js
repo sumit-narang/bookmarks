@@ -2,7 +2,7 @@
  * DiagnosticsScreen - Dev/e2e persistence observability and deterministic actions.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,25 +22,51 @@ import {
   getDiagnosticsSnapshot,
   removeLatestPlaceFromAllCollections,
   runDiagnosticsSync,
+  setDiagnosticsHexagonTheme,
   wipeDiagnosticsLocalData,
 } from '../data/diagnostics';
-import { e2ePrimaryUserId, e2eSecondaryUserId } from '../config/e2e';
+import {
+  e2ePrimaryUserId,
+  e2eSecondaryUserId,
+  e2eTertiaryUserId,
+  e2eQuaternaryUserId,
+  e2eQuinaryUserId,
+  e2eSenaryUserId,
+  e2eSeptenaryUserId,
+  e2eOctonaryUserId,
+} from '../config/e2e';
 import { colors } from '../styles/colors';
 
-const DiagnosticsScreen = ({ navigation }) => {
+const DiagnosticsScreen = ({ navigation, route }) => {
   const { signInWithTestUser, signOut } = useAuth();
   const [snapshot, setSnapshot] = useState(null);
   const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(true);
   const [isRunningAction, setIsRunningAction] = useState(false);
+  const lastHandledRouteActionRef = useRef(null);
 
   const loadSnapshot = async () => {
     setIsLoadingSnapshot(true);
 
+    let lastError = null;
+
     try {
-      const nextSnapshot = await getDiagnosticsSnapshot();
-      setSnapshot(nextSnapshot);
-    } catch (error) {
-      console.error('Error loading diagnostics snapshot:', error);
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const nextSnapshot = await getDiagnosticsSnapshot();
+          setSnapshot(nextSnapshot);
+          return;
+        } catch (error) {
+          lastError = error;
+
+          if (attempt < 3) {
+            await new Promise((resolve) => {
+              setTimeout(resolve, 300 * attempt);
+            });
+          }
+        }
+      }
+
+      console.error('Error loading diagnostics snapshot:', lastError);
       Alert.alert('Diagnostics Error', 'Unable to load diagnostics snapshot.');
     } finally {
       setIsLoadingSnapshot(false);
@@ -69,6 +95,47 @@ const DiagnosticsScreen = ({ navigation }) => {
     } finally {
       setIsRunningAction(false);
     }
+  };
+
+  const runRouteAction = async (action) => {
+    switch (action) {
+      case 'set-theme-stone':
+        await runAction(() => setDiagnosticsHexagonTheme('stone'));
+        break;
+      case 'set-theme-basalt':
+        await runAction(() => setDiagnosticsHexagonTheme('basalt'));
+        break;
+      case 'run-sync':
+        await runAction(runDiagnosticsSync);
+        break;
+      case 'refresh':
+        await runAction(loadSnapshot);
+        break;
+      default:
+        break;
+    }
+  };
+
+  useEffect(() => {
+    const action = route?.params?.action;
+
+    if (!action || typeof action !== 'string') {
+      return;
+    }
+
+    const nonce = route?.params?.nonce;
+    const routeActionKey = `${action}:${typeof nonce === 'string' ? nonce : ''}`;
+
+    if (lastHandledRouteActionRef.current === routeActionKey) {
+      return;
+    }
+
+    lastHandledRouteActionRef.current = routeActionKey;
+    void runRouteAction(action);
+  }, [route?.params?.action, route?.params?.nonce]);
+
+  const signInForDiagnostics = async (userId) => {
+    await signInWithTestUser(userId);
   };
 
   const handleBack = () => {
@@ -155,6 +222,15 @@ const DiagnosticsScreen = ({ navigation }) => {
               </Text>
             </View>
 
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Preferences</Text>
+              <Text style={styles.valueText} testID="e2e-diagnostics-hexagon-theme">
+                hexagonTheme: {snapshot.preferences.hexagonTheme || 'null'}
+              </Text>
+              <Text style={styles.valueText} testID="e2e-diagnostics-hexagon-variant">
+                hexagonVariant: {snapshot.preferences.hexagonVariant || 'null'}
+              </Text>
+            </View>
           </>
         )}
 
@@ -172,7 +248,7 @@ const DiagnosticsScreen = ({ navigation }) => {
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => runAction(() => signInWithTestUser(e2ePrimaryUserId))}
+            onPress={() => runAction(() => signInForDiagnostics(e2ePrimaryUserId))}
             testID="e2e-diagnostics-action-signin-user-a"
             disabled={isRunningAction}
           >
@@ -181,11 +257,65 @@ const DiagnosticsScreen = ({ navigation }) => {
 
           <TouchableOpacity
             style={styles.actionButton}
-            onPress={() => runAction(() => signInWithTestUser(e2eSecondaryUserId))}
+            onPress={() => runAction(() => signInForDiagnostics(e2eSecondaryUserId))}
             testID="e2e-diagnostics-action-signin-user-b"
             disabled={isRunningAction}
           >
             <Text style={styles.actionText}>Sign In User B</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eTertiaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-c"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User C</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eQuaternaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-d"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User D</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eQuinaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-e"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User E</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eSenaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-f"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User F</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eSeptenaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-g"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User G</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => signInForDiagnostics(e2eOctonaryUserId))}
+            testID="e2e-diagnostics-action-signin-user-h"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Sign In User H</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -222,6 +352,24 @@ const DiagnosticsScreen = ({ navigation }) => {
             disabled={isRunningAction}
           >
             <Text style={styles.actionText}>Remove Latest Place From All Collections</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => setDiagnosticsHexagonTheme('stone'))}
+            testID="e2e-diagnostics-action-set-theme-stone"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Set Hexagon Theme: stone</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => runAction(() => setDiagnosticsHexagonTheme('basalt'))}
+            testID="e2e-diagnostics-action-set-theme-basalt"
+            disabled={isRunningAction}
+          >
+            <Text style={styles.actionText}>Set Hexagon Theme: basalt</Text>
           </TouchableOpacity>
 
           <TouchableOpacity

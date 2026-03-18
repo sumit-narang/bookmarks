@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
-import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, Platform, LogBox } from 'react-native';
 import * as Linking from 'expo-linking';
 
 import AppNavigator from './navigation/AppNavigator';
@@ -14,6 +14,12 @@ import { initializeStorage } from './data/storage';
 import { colors } from './styles/colors';
 import { AuthProvider } from './context/AuthContext';
 import { isE2eModeEnabled } from './config/e2e';
+
+if (isE2eModeEnabled) {
+  LogBox.ignoreAllLogs(true);
+}
+
+const isDiagnosticsEnabled = isE2eModeEnabled || __DEV__;
 
 // Deep linking configuration
 const prefix = Linking.createURL('/');
@@ -26,8 +32,12 @@ const getWebOrigin = () => {
   return '';
 };
 
+const linkingPrefixes = [prefix, getWebOrigin(), 'https://bookmarks.app', 'bookmarks://'].filter(
+  (value) => typeof value === 'string' && value.length > 0
+);
+
 const linking = {
-  prefixes: [prefix, getWebOrigin(), 'https://bookmarks.app', 'bookmarks://'],
+  prefixes: linkingPrefixes,
   config: {
     screens: {
       SharedCollection: {
@@ -36,7 +46,7 @@ const linking = {
           data: (data) => data,
         },
       },
-      ...(isE2eModeEnabled ? { Diagnostics: 'diagnostics' } : {}),
+      ...(isDiagnosticsEnabled ? { Diagnostics: 'diagnostics' } : {}),
       Main: {
         screens: {
           LibraryTab: {

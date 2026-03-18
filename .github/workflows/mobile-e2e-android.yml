@@ -16,6 +16,7 @@ on:
       - preferences/**
       - schema/**
       - scripts/mobileE2eAndroid.sh
+      - scripts/mobileE2eAndroidShard.sh
       - share/**
       - sync/**
       - package.json
@@ -37,6 +38,7 @@ on:
       - preferences/**
       - schema/**
       - scripts/mobileE2eAndroid.sh
+      - scripts/mobileE2eAndroidShard.sh
       - share/**
       - sync/**
       - package.json
@@ -48,14 +50,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  maestro-android:
-    name: Maestro Android e2e
+  mobile-e2e-android-sharded:
+    name: Maestro Runner Android e2e (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       CI: "1"
       EXPO_NO_INTERACTIVE: "1"
       EXPO_PUBLIC_GOOGLE_PLACES_API_KEY: ${{ secrets.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY }}
+      E2E_SHARD: ${{ matrix.shard }}
+      E2E_ARTIFACT_ROOT: .bookmarks/e2e-artifacts/shard-${{ matrix.shard }}
 
     steps:
       - name: Checkout
@@ -92,10 +100,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Maestro CLI
+      - name: Install maestro-runner
         run: |
-          curl -Ls "https://get.maestro.mobile.dev" | bash
-          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+          curl -fsSL "https://open.devicelab.dev/install/maestro-runner" | bash
+
+          if command -v maestro-runner >/dev/null 2>&1; then
+            echo "$(dirname $(command -v maestro-runner))" >> "$GITHUB_PATH"
+          elif [ -x "$HOME/.maestro-runner/bin/maestro-runner" ]; then
+            export PATH="$HOME/.maestro-runner/bin:$PATH"
+            echo "$HOME/.maestro-runner/bin" >> "$GITHUB_PATH"
+          elif [ -x "$HOME/.local/bin/maestro-runner" ]; then
+            export PATH="$HOME/.local/bin:$PATH"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          else
+            echo "maestro-runner not found after installation!"
+            exit 1
+          fi
+
+          maestro-runner --version
 
       - name: Write mobile e2e env
         run: |
@@ -110,79 +132,22 @@ jobs:
           JAVA_HOME=${JAVA_HOME}
           EOF
 
-      - name: Run Maestro e2e suite on Android emulator
+      - name: Run maestro-runner shard on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
           arch: x86_64
           target: google_apis
-          profile: pixel_7
+          profile: pixel_5
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: |
-            set -euo pipefail
-            mkdir -p .bookmarks
-
-            cleanup() {
-              if [ -n "${METRO_PID:-}" ]; then
-                kill "${METRO_PID}" >/dev/null 2>&1 || true
-              fi
-              if [ -n "${BACKEND_PID:-}" ]; then
-                kill "${BACKEND_PID}" >/dev/null 2>&1 || true
-              fi
-            }
-            trap cleanup EXIT
-
-            adb reverse tcp:8081 tcp:8081
-            adb reverse tcp:8787 tcp:8787
-
-            npm run mobile:e2e:backend:start > .bookmarks/backend-e2e.log 2>&1 &
-            BACKEND_PID=$!
-
-            for attempt in $(seq 1 60); do
-              if curl --fail --silent http://127.0.0.1:8787/health > /dev/null; then
-                break
-              fi
-
-              if [ "$attempt" -eq 60 ]; then
-                echo "Backend failed to become healthy."
-                exit 1
-              fi
-
-              sleep 2
-            done
-
-            npm --workspace @bookmarks/mobile run start -- --dev-client --port 8081 --localhost --non-interactive > .bookmarks/metro.log 2>&1 &
-            METRO_PID=$!
-
-            for attempt in $(seq 1 90); do
-              if curl --silent http://127.0.0.1:8081/status | grep -q "packager-status:running"; then
-                break
-              fi
-
-              if [ "$attempt" -eq 90 ]; then
-                echo "Metro failed to start."
-                exit 1
-              fi
-
-              sleep 2
-            done
-
-            pushd apps/mobile/android > /dev/null
-            ./gradlew assembleDebug --no-daemon
-            popd > /dev/null
-
-            adb install -r apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
-
-            npm run mobile:e2e:android
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 6144 -no-snapshot-load -no-snapshot-save
+          script: bash scripts/mobileE2eAndroidShard.sh
 
       - name: Upload e2e artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mobile-e2e-android-artifacts
+          name: mobile-e2e-android-artifacts-shard-${{ matrix.shard }}
           if-no-files-found: warn
           path: |
-            .bookmarks/e2e-artifacts
-            .bookmarks/backend-e2e.log
-            .bookmarks/metro.log
+            .bookmarks/e2e-artifacts/shard-${{ matrix.shard }}

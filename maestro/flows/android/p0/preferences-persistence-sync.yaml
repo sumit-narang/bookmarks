@@ -2,24 +2,117 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
+- tapOn:
+    text: "Close app"
+    optional: true
+- tapOn:
+    text: "Wait"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: e2e-home-root
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- openLink: bookmarks://diagnostics
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-refresh
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-signin-user-e
+    direction: DOWN
+    timeout: 60000
 - tapOn:
-    id: e2e-diagnostics-action-signin-user-a
-- tapOn:
-    id: e2e-diagnostics-action-set-theme-stone
+    id: e2e-diagnostics-action-signin-user-e
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-signin-user-e
+      enabled: true
+    timeout: 60000
+- openLink: bookmarks://diagnostics?action=set-theme-stone&nonce=preferences-initial
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-refresh
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-hexagon-theme
+    direction: UP
+    timeout: 60000
 - assertVisible: "hexagonTheme: stone"
 - stopApp
 - launchApp
+- tapOn:
+    text: "Close app"
+    optional: true
+- tapOn:
+    text: "Wait"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: e2e-home-root
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- openLink: bookmarks://diagnostics
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-refresh
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-hexagon-theme
+    direction: UP
+    timeout: 60000
 - assertVisible: "hexagonTheme: stone"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-outbox-pending
+    direction: UP
+    timeout: 60000
 - assertVisible: "outboxPending: 1"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-run-sync
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-run-sync
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-run-sync
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-outbox-pending
+    direction: UP
+    timeout: 60000
 - assertVisible: "outboxPending: 0"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-hexagon-theme
+    direction: UP
+    timeout: 60000
 - assertVisible: "hexagonTheme: stone"

@@ -30,31 +30,26 @@ interface SeedUser {
   preferenceTheme: string;
 }
 
+const createSeedUser = (suffix: string, latitude: number, longitude: number, preferenceTheme: string): SeedUser => {
+  const uppercaseSuffix = suffix.toUpperCase();
+
+  return {
+    userId: `e2e-user-${suffix}`,
+    email: `e2e-user-${suffix}@bookmarks.test`,
+    name: `E2E User ${uppercaseSuffix}`,
+    seededPlaceId: `e2e-place-${suffix}-1`,
+    seededCollectionId: `e2e-collection-${suffix}-1`,
+    latitude,
+    longitude,
+    placeName: `Seeded Place ${uppercaseSuffix}`,
+    collectionName: `Seeded Collection ${uppercaseSuffix}`,
+    preferenceTheme,
+  };
+};
+
 const seededUsers: SeedUser[] = [
-  {
-    userId: 'e2e-user-a',
-    email: 'e2e-user-a@bookmarks.test',
-    name: 'E2E User A',
-    seededPlaceId: 'e2e-place-a-1',
-    seededCollectionId: 'e2e-collection-a-1',
-    latitude: 53.3498,
-    longitude: -6.2603,
-    placeName: 'Seeded Place A',
-    collectionName: 'Seeded Collection A',
-    preferenceTheme: 'basalt',
-  },
-  {
-    userId: 'e2e-user-b',
-    email: 'e2e-user-b@bookmarks.test',
-    name: 'E2E User B',
-    seededPlaceId: 'e2e-place-b-1',
-    seededCollectionId: 'e2e-collection-b-1',
-    latitude: 40.7128,
-    longitude: -74.006,
-    placeName: 'Seeded Place B',
-    collectionName: 'Seeded Collection B',
-    preferenceTheme: 'stone',
-  },
+  createSeedUser('a', 53.3498, -6.2603, 'basalt'),
+  createSeedUser('b', 40.7128, -74.006, 'stone'),
 ];
 
 const seedDatabase = async (databasePath: string): Promise<void> => {

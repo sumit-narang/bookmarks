@@ -1,0 +1,28 @@
+# Fly.io configuration for bookmarks backend
+
+app = 'bookmarks-backend'
+primary_region = 'sjc'
+
+[build]
+
+[env]
+  NODE_ENV = 'production'
+  BOOKMARKS_BACKEND_HOST = '0.0.0.0'
+  BOOKMARKS_BACKEND_PORT = '8080'
+  BOOKMARKS_BACKEND_DB_PATH = '/data/backend.sqlite'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+[mounts]
+  source = 'bookmarks_data'
+  destination = '/data'

@@ -2,16 +2,80 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
-- openLink: bookmarks://diagnostics
 - tapOn:
-    id: e2e-diagnostics-action-signin-user-a
+    text: "Close app"
+    optional: true
+- tapOn:
+    text: "Wait"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: e2e-home-root
+    timeout: 60000
+- openLink: bookmarks://diagnostics
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-refresh
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-signin-user-f
+    direction: DOWN
+    timeout: 60000
+- tapOn:
+    id: e2e-diagnostics-action-signin-user-f
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-signin-user-f
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
-- assertVisible: "places: 1"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-places
+    direction: UP
+    timeout: 60000
+- assertVisible: "places: 0"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-create-remote-place
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-create-remote-place
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-create-remote-place
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-run-sync
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-run-sync
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-run-sync
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
-- assertVisible: "places: 2"
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-places
+    direction: UP
+    timeout: 60000
+- assertVisible: "places: 1"

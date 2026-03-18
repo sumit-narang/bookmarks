@@ -2,17 +2,95 @@ appId: com.sumitnarang76.bookmarksmobile
 ---
 - launchApp:
     clearState: true
-- openLink: bookmarks://diagnostics
 - tapOn:
-    id: e2e-diagnostics-action-signin-user-a
+    text: "Close app"
+    optional: true
+- tapOn:
+    text: "Wait"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: e2e-home-root
+    timeout: 60000
+- openLink: bookmarks://diagnostics
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-refresh
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-signin-user-c
+    direction: DOWN
+    timeout: 60000
+- tapOn:
+    id: e2e-diagnostics-action-signin-user-c
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-signin-user-c
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-create-place
+    direction: DOWN
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-create-place
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-create-place
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
-- assertVisible: "places: 2"
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-refresh
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-places
+    direction: UP
+    timeout: 60000
+- assertVisible: "places: 1"
 - stopApp
 - launchApp
+- tapOn:
+    text: "Close app"
+    optional: true
+- tapOn:
+    text: "Wait"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: e2e-home-root
+    timeout: 60000
 - openLink: bookmarks://diagnostics
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-refresh
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-action-refresh
+    direction: UP
+    timeout: 60000
 - tapOn:
     id: e2e-diagnostics-action-refresh
-- assertVisible: "places: 2"
+- extendedWaitUntil:
+    visible:
+      id: e2e-diagnostics-action-refresh
+      enabled: true
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: e2e-diagnostics-count-places
+    direction: UP
+    timeout: 60000
+- assertVisible: "places: 1"

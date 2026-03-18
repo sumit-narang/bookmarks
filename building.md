@@ -111,6 +111,41 @@ adb reverse tcp:8081 tcp:8081
 
 Then reopen the app.
 
+## Release Build (Physical Device)
+
+To install a standalone release APK that works without a USB/ADB connection or Metro bundler:
+
+1. **Temporarily restrict architectures** to your device's ABI to speed up the build and avoid NDK compiler issues on other ABIs. In `apps/mobile/android/gradle.properties`, change:
+
+   ```properties
+   reactNativeArchitectures=arm64-v8a
+   ```
+
+   (Check your device's ABI with `adb shell getprop ro.product.cpu.abi`.)
+
+2. **Ensure `.env` points to your deployed backend** — the release build embeds env vars at build time, so `EXPO_PUBLIC_BOOKMARKS_BACKEND_URL` must be the production/deployed URL (not `127.0.0.1`).
+
+3. **Build and install:**
+
+   ```bash
+   npx expo run:android --variant release --no-bundler
+   ```
+
+   This bundles JavaScript via Hermes, builds a release APK signed with the debug keystore, installs it on the connected device, and launches it.
+
+   The resulting APK is at:
+   ```
+   apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+   ```
+
+4. **Restore architectures** in `gradle.properties` for future emulator/debug builds:
+
+   ```properties
+   reactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64
+   ```
+
+> **Note:** The release build uses the debug keystore for signing (`android/app/debug.keystore`). For Play Store distribution, generate a dedicated release keystore — see [React Native signed APK docs](https://reactnative.dev/docs/signed-apk-android).
+
 ## Other Run Commands
 
 | Command | Description |
@@ -129,7 +164,7 @@ When running the local backend in development (`npm run backend:start`), test au
 - Optional: set `EXPO_PUBLIC_BOOKMARKS_DEV_TEST_AUTH=0` to hide the dev test-auth button.
 - Production remains protected: backend rejects test auth when `NODE_ENV=production`.
 
-## Mobile E2E (Maestro, Android)
+## Mobile E2E (maestro-runner, Android)
 
 1. Enable e2e mode in `apps/mobile/.env`:
 
@@ -150,7 +185,20 @@ npm run mobile:e2e:backend:start
 npm run mobile:e2e:android
 ```
 
-Artifacts (JUnit, logs, diagnostics capture on failure) are written under:
+The runner uses `maestro-runner` with a reliability-first parallelism cap.
+
+By default, worker count is capped at `4` via `E2E_MAX_PARALLEL` to reduce emulator instability, while still auto-scaling up to available/startable devices.
+
+Optional overrides:
+
+```bash
+E2E_MAX_PARALLEL=4 npm run mobile:e2e:android   # default reliability cap
+E2E_PARALLEL=6 npm run mobile:e2e:android       # force exact worker count
+E2E_WAIT_FOR_IDLE_TIMEOUT=100 npm run mobile:e2e:android
+E2E_BOOT_TIMEOUT=300 npm run mobile:e2e:android
+```
+
+Artifacts (report JSON/HTML/JUnit, logs, diagnostics capture on failure) are written under:
 
 ```bash
 .bookmarks/e2e-artifacts/
