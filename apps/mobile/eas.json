@@ -22,6 +22,16 @@
     "production": {
       "android": {
         "buildType": "app-bundle"
+      },
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleId": "sumitnarang76@gmail.com",
+        "ascAppId": "6759269992",
+        "appleTeamId": "XC35LBHAHD"
       }
     }
   }

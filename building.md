@@ -1,8 +1,70 @@
-# Building & Running Locally (Android)
+# Building & Running Locally
 
-This repository is now a workspace monorepo. Mobile app lives in `apps/mobile`, but all commands below are run from the repository root.
+This repository is a workspace monorepo. The mobile app lives in `apps/mobile`, but all commands are run from the repository root.
 
-## Prerequisites
+---
+
+## iOS Setup (macOS only)
+
+### Prerequisites
+
+- **macOS** with **Xcode** installed (App Store)
+- **Node.js** (via nvm)
+- **CocoaPods**: `sudo gem install cocoapods`
+- A Google Places API key and a Google Maps iOS API key from [Google Cloud Console](https://console.cloud.google.com/)
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Create `.env` file
+
+```bash
+cp apps/mobile/.env.example apps/mobile/.env
+```
+
+Fill in your keys:
+
+```
+EXPO_PUBLIC_GOOGLE_PLACES_API_KEY=<your-google-places-api-key>
+EXPO_PUBLIC_GOOGLE_MAPS_IOS_API_KEY=<your-google-maps-ios-api-key>
+```
+
+### 3. Generate native iOS project
+
+```bash
+cd apps/mobile && npx expo prebuild --platform ios && cd ios && pod install && cd ../../../
+```
+
+This generates the `ios/` directory and installs all CocoaPods.
+
+### 4. Run on simulator or device
+
+```bash
+npm run ios
+```
+
+To target a specific simulator:
+
+```bash
+cd apps/mobile && npx expo run:ios --simulator "iPhone 16"
+```
+
+To run on a physical device, connect it via USB or enable Wireless Debugging, then:
+
+```bash
+cd apps/mobile && npx expo run:ios --device
+```
+
+> **Note:** You need an Apple Developer account (free tier works) and your device registered in Xcode under Signing & Capabilities.
+
+---
+
+## Android Setup
+
+### Prerequisites
 
 - **Node.js** (via nvm)
 - **Java 17** — the project requires JDK 17. If you have a newer version (e.g. Java 25), install JDK 17:
@@ -10,8 +72,6 @@ This repository is now a workspace monorepo. Mobile app lives in `apps/mobile`, 
   sudo pacman -S jdk17-openjdk
   ```
 - **Android SDK** — install via Android Studio or standalone SDK tools
-
-## Environment Setup
 
 ### 1. Set ANDROID_HOME
 
@@ -57,7 +117,7 @@ Edit `apps/mobile/android/app/src/main/AndroidManifest.xml` and add this `<meta-
 
 This is required by `react-native-maps` to render Google Maps.
 
-## Install Dependencies
+### 4. Install dependencies
 
 ```bash
 npm install

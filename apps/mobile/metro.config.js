@@ -20,7 +20,7 @@ const config = getDefaultConfig(projectRoot);
 
 const { transformer, resolver, watchFolders } = config;
 
-config.watchFolders = [...new Set([...(watchFolders || []), ...sharedModuleRoots])];
+config.watchFolders = [...new Set([...(watchFolders || []), workspaceRoot, ...sharedModuleRoots])];
 
 config.transformer = {
   ...transformer,
@@ -31,6 +31,10 @@ config.resolver = {
   ...resolver,
   assetExts: resolver.assetExts.filter((ext) => ext !== 'svg'),
   sourceExts: [...resolver.sourceExts, 'svg'],
+  nodeModulesPaths: [
+    path.resolve(projectRoot, 'node_modules'),
+    path.resolve(workspaceRoot, 'node_modules'),
+  ],
 };
 
 module.exports = config;
